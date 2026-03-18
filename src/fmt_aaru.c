@@ -45,7 +45,11 @@ static DiscTrackType track_type_from_aaru(uint8_t aaru_type)
     }
 }
 
-int aaru_write(const char *aaru_path, const DiscLayout *layout, const char *options)
+/* SBI subchannel writer (fmt_sbi.c) */
+int sbi_load_and_write(const char *sbi_path, void *aaru_ctx);
+
+int aaru_write(const char *aaru_path, const DiscLayout *layout,
+               const char *options, const char *sbi_path)
 {
     assert(aaru_path != NULL);
     assert(layout != NULL);
@@ -161,6 +165,17 @@ int aaru_write(const char *aaru_path, const DiscLayout *layout, const char *opti
             fprintf(stderr, "\r    %" PRId64 "/%" PRId64 "\n", count, count);
 
         fclose(f);
+    }
+
+    /* Write SBI subchannel data if provided */
+    if(sbi_path != NULL && sbi_path[0] != '\0')
+    {
+        int sbi_rc = sbi_load_and_write(sbi_path, ctx);
+        if(sbi_rc != DIMG_OK)
+        {
+            aaruf_close(ctx);
+            return sbi_rc;
+        }
     }
 
     int32_t cres = aaruf_close(ctx);

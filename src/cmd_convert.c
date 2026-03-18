@@ -20,8 +20,10 @@ int iso_parse(const char *iso_path, DiscSystem system, DiscLayout *layout);
 int iso_write(const char *iso_path, const DiscLayout *layout, void *aaru_ctx);
 int cue_parse(const char *cue_path, DiscSystem system, DiscLayout *layout);
 int cue_write(const char *cue_path, const DiscLayout *layout, void *aaru_ctx);
-int aaru_write(const char *aaru_path, const DiscLayout *layout, const char *options);
+int aaru_write(const char *aaru_path, const DiscLayout *layout,
+               const char *options, const char *sbi_path);
 int aaru_read_layout(const char *aaru_path, DiscLayout *layout, void **ctx_out);
+void sbi_find_for_cue(const char *cue_path, char *sbi_buf, size_t bufsize);
 
 /* Forward declaration for close */
 extern int aaruf_close(void *context);
@@ -177,7 +179,13 @@ int cmd_convert(int argc, char **argv)
         fprintf(stderr, "Tracks:     %d\n", layout.track_count);
         fprintf(stderr, "Sectors:    %" PRId64 "\n", layout.total_sectors);
 
-        return aaru_write(output, &layout, options);
+        /* Auto-detect SBI subchannel file for CUE/BIN input */
+        char sbi_path[512] = {0};
+        if(in_fmt == DISC_FMT_CUE)
+            sbi_find_for_cue(input, sbi_path, sizeof(sbi_path));
+
+        return aaru_write(output, &layout, options,
+                          sbi_path[0] ? sbi_path : NULL);
     }
 
     /* === RENDER: .aaru → target === */

@@ -22,7 +22,8 @@ static void print_usage(void)
             "  dimg-tool convert -i <in> -o <out>  Convert between formats\n"
             "  dimg-tool verify  <image>           Verify image integrity\n"
             "\n"
-            "Supported formats: .aaru (via libaaruformat)\n");
+            "Formats: .aaru, .cue/.bin, .iso\n"
+            "Run 'dimg-tool convert --help' for conversion options.\n");
 }
 
 int main(int argc, char **argv)

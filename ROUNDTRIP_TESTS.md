@@ -135,6 +135,7 @@ disc.h/disc.c  — shared DiscLayout struct, system/format enums
 fmt_cue.c      — CUE/BIN parser (single + multi-file) and writer
 fmt_iso.c      — ISO reader and writer (2048-byte DVD sectors)
 fmt_aaru.c     — bridge to libaaruformat (ingest + render)
+fmt_sbi.c      — SBI subchannel parser for PS1 LibCrypt
 ```
 
 ### Ingest flow (CUE/ISO → .aaru)
@@ -143,6 +144,7 @@ fmt_aaru.c     — bridge to libaaruformat (ingest + render)
 2. `aaru_write()` creates .aaru image via `aaruf_create()`
 3. For CD: `aaruf_set_tracks()` with track layout, `aaruf_write_sector_long()` per sector
 4. For DVD: `aaruf_write_sector()` per sector (no track table needed)
+5. If SBI file found alongside CUE: writes Q subchannel data via `aaruf_write_sector_tag()`
 
 ### Render flow (.aaru → CUE/ISO)
 
@@ -160,8 +162,27 @@ to match the original disc data (where the CRC was empty/zeroed).
 
 2 lines changed in `src/read.c` — both DDT v1 and v2 code paths.
 
+## SBI Subchannel Support (PS1 LibCrypt)
+
+SBI files contain Q subchannel corrections for PS1 LibCrypt copy protection.
+Auto-detected during CUE/BIN ingest when a `.sbi` file exists alongside the `.cue`.
+
+### SBI format
+
+- 4 bytes: `"SBI\0"` magic
+- N × 14-byte records: 3 bytes BCD MSF + 1 byte type (0x01) + 10 bytes Q data
+- LibCrypt v1: 16 records (8 key pairs), LibCrypt v2: 32 records (16 key pairs)
+- Redump distributes 233 SBI files for European PS1 games
+
+### Integration
+
+- Q data (10 bytes) extended to 12 bytes with CRC16 (CRC-CCITT, inverted)
+- 12-byte Q expanded to 96-byte interleaved raw subchannel (P=0xFF, Q from SBI, R-W=0x00)
+- Written via `aaruf_write_sector_tag(ctx, lba, false, raw96, 96, kSectorTagCdSubchannel)`
+- Stored in .aaru as CST+LZMA compressed subchannel block (sparse data compresses well)
+- Sector data integrity unaffected — SHA-256 roundtrip still passes with SBI present
+
 ## What's NOT tested yet
 
-- Subchannel data preservation (SBI files available for PS1)
 - Multi-session disc handling
 - Lead-in/lead-out sectors (negative sector addresses)

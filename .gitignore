@@ -4,3 +4,4 @@ build-musl/
 *.a
 *.so
 dimg-tool
+.hg/

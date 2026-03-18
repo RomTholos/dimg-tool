@@ -2,6 +2,8 @@
  * dimg-tool info — display image metadata
  */
 
+#include <inttypes.h>
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "dimg.h"
@@ -18,17 +20,16 @@ int cmd_info(int argc, char **argv)
 
     const char *path = argv[1];
     void       *ctx  = NULL;
-    int         res  = 0;
 
-    ctx = aaruf_open(path, &res);
-    if(ctx == NULL || res != AARUF_STATUS_OK)
+    ctx = aaruf_open(path, false, NULL);
+    if(ctx == NULL)
     {
-        fprintf(stderr, "Failed to open image: %s (error %d)\n", path, res);
+        fprintf(stderr, "Failed to open image: %s\n", path);
         return DIMG_ERR_IO;
     }
 
     ImageInfo info;
-    res = aaruf_get_image_info(ctx, &info);
+    int res = aaruf_get_image_info(ctx, &info);
     if(res != AARUF_STATUS_OK)
     {
         fprintf(stderr, "Failed to read image info (error %d)\n", res);
@@ -41,11 +42,7 @@ int cmd_info(int argc, char **argv)
     printf("Sectors:     %" PRIu64 "\n", info.Sectors);
     printf("Sector size: %u\n", info.SectorSize);
     printf("Media size:  %" PRIu64 " bytes\n", (uint64_t)info.Sectors * info.SectorSize);
-
-    if(info.Creator[0] != '\0')
-        printf("Creator:     %s\n", info.Creator);
-    if(info.MediaTitle[0] != '\0')
-        printf("Title:       %s\n", info.MediaTitle);
+    printf("Application: %s\n", info.Application);
 
     aaruf_close(ctx);
     return DIMG_OK;

@@ -2,6 +2,7 @@
  * dimg-tool verify — verify image integrity
  */
 
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "dimg.h"
@@ -18,16 +19,15 @@ int cmd_verify(int argc, char **argv)
 
     const char *path = argv[1];
     void       *ctx  = NULL;
-    int         res  = 0;
 
-    ctx = aaruf_open(path, &res);
-    if(ctx == NULL || res != AARUF_STATUS_OK)
+    ctx = aaruf_open(path, false, NULL);
+    if(ctx == NULL)
     {
-        fprintf(stderr, "Failed to open image: %s (error %d)\n", path, res);
+        fprintf(stderr, "Failed to open image: %s\n", path);
         return DIMG_ERR_IO;
     }
 
-    res = aaruf_verify(ctx);
+    int res = aaruf_verify_image(ctx);
     if(res == AARUF_STATUS_OK)
     {
         printf("PASS: %s\n", path);

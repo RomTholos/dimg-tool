@@ -146,8 +146,9 @@ from .aaru (zstd-19). Empty pregap sectors (SECTOR_NOT_DUMPED) included as zeros
 | Neo Geo CD | 41 | 309,347 | `862e7038...deba4078` | PASS |
 | PS1 (MODE2) | 1 | 183,775 | `1ae17e78...899a852a` | PASS |
 | PS2 CD (MODE2) | 1 | 144,121 | `ee143e43...6eddf1bc` | PASS |
+| PS2 DVD (ISO) | 1 | 869,680 | `8b2ffcc5...7e5052d6` | PASS |
 
-All 8 disc images verified: **CUE/BIN → .aaru → readback produces identical SHA-256.**
+All 9 disc images verified: **CUE/BIN/ISO → .aaru → readback produces identical SHA-256.**
 
 ## Fixes Applied to libaaru-ext
 

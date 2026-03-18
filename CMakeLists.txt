@@ -21,6 +21,7 @@ add_executable(dimg-tool
     src/fmt_aaru.c
     src/fmt_cue.c
     src/fmt_iso.c
+    src/fmt_sbi.c
 )
 
 target_include_directories(dimg-tool PRIVATE

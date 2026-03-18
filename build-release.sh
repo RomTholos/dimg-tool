@@ -32,7 +32,7 @@ echo "Building dimg-tool ${VERSION}..."
 "$MUSL-gcc" -O2 -static -Wno-unknown-pragmas \
     -o "$DIST/$BINARY" \
     src/main.c src/cmd_info.c src/cmd_convert.c src/cmd_verify.c \
-    src/disc.c src/fmt_aaru.c src/fmt_cue.c src/fmt_iso.c \
+    src/disc.c src/fmt_aaru.c src/fmt_cue.c src/fmt_iso.c src/fmt_sbi.c \
     -Iinclude -I"$INCDIR" -I"$INC3P/BLAKE3/c" -I"$INC3P/uthash/src" \
     "$LIBDIR/libaaruformat.a" \
     "$LIBDIR/libzstd_static.a" \

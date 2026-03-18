@@ -8,8 +8,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra -Werror -pedantic)
 
 # libaaruformat — built from sibling directory
-set(AARUFORMAT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../libaaru-ext")
-add_subdirectory("${AARUFORMAT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/libaaru-ext")
+set(AARUFORMAT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../libaaruformat")
+add_subdirectory("${AARUFORMAT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/libaaruformat")
 
 # dimg-tool executable
 add_executable(dimg-tool

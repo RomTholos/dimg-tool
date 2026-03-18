@@ -3,12 +3,12 @@ set -eu
 
 VERSION="${1:-v0.1.0}"
 MUSL="/home/kab/src/musl-cross-make/output/bin/x86_64-linux-musl"
-LIBAARU="../libaaru-ext"
+LIBAARU="../libaaruformat"
 DIST="$(dirname "$0")/dist"
 
-# Build libaaru-ext static library if needed
+# Build libaaruformat static library if needed
 if [ ! -f "$LIBAARU/build-musl/libaaruformat.a" ]; then
-    echo "Building libaaru-ext (static, musl)..."
+    echo "Building libaaruformat (static, musl)..."
     mkdir -p "$LIBAARU/build-musl"
     cd "$LIBAARU/build-musl"
     cmake .. \
@@ -16,7 +16,6 @@ if [ ! -f "$LIBAARU/build-musl/libaaruformat.a" ]; then
         -DCMAKE_AR="$MUSL-gcc-ar" \
         -DCMAKE_RANLIB="$MUSL-gcc-ranlib" \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_MODULE_PATH="$(pwd)/../cmake-modules" \
         -DAARU_BUILD_PACKAGE=ON \
         -DBUILD_SHARED_LIBS=OFF
     make -j"$(nproc)"

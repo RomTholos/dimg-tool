@@ -1,0 +1,6 @@
+build/
+build-musl/
+*.o
+*.a
+*.so
+dimg-tool

@@ -147,6 +147,22 @@ from .aaru (zstd-19). Empty pregap sectors (SECTOR_NOT_DUMPED) included as zeros
 
 All 6 disc images verified: **CUE/BIN → .aaru → readback produces identical SHA-256.**
 
+## Known Limitations
+
+### PS1 (MODE2/2352) — EDC reconstruction on Mode 2 Form 2 sectors
+
+libaaruformat regenerates the EDC (4-byte error detection code at bytes 2348-2351) for
+Mode 2 Form 2 sectors that had an empty/zeroed CRC on the original disc. The status field
+correctly reports `SectorStatusMode2Form2NoCrc (6)` indicating the original had no CRC.
+
+User data (bytes 24-2347) is preserved exactly. Only the 4-byte EDC trailer differs.
+This affects a subset of sectors on PS1 discs — sectors 0-11 typically pass, some later
+sectors have regenerated CRC.
+
+For the romtholos pipeline this is acceptable: game data is intact. For bit-exact
+preservation, the original CRC bytes (typically zeros) would need to be stored as a
+sector tag and restored during rendering.
+
 ## What's NOT tested yet
 - Subchannel data preservation (would need .sub files or raw dumps)
 - GDI format input (different track layout descriptor)

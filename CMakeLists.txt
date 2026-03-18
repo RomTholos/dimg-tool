@@ -17,6 +17,10 @@ add_executable(dimg-tool
     src/cmd_info.c
     src/cmd_convert.c
     src/cmd_verify.c
+    src/disc.c
+    src/fmt_aaru.c
+    src/fmt_cue.c
+    src/fmt_iso.c
 )
 
 target_include_directories(dimg-tool PRIVATE

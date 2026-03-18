@@ -6,11 +6,29 @@
 
 - libaaruformat: upstream git clone (alpha.33, 2025-03), patched with zstd (kCompressionZstd = 4)
 - zstd: libzstd 1.5.7
-- Build: gcc, shared lib, x86_64 Linux
-- Method: CUE/BIN → .aaru (write_sector_long, 2352-byte raw sectors) → read back → memcmp
-- All tests: FLAC for audio tracks, configurable codec for data tracks
+- Build: static musl binary (x86_64-linux-musl-gcc), fully portable
+- Method: `dimg-tool convert` for all ingest/render operations
+- All tests: FLAC for audio tracks, zstd-19 for data tracks
 - Deduplication enabled (DDT) for all tests
-- Test media: Sega Dreamcast GD-ROM disc images (CUE/BIN from redump)
+- Test media: redump disc images (CUE/BIN and ISO)
+
+## Supported Conversions
+
+| Direction | Formats | Systems |
+|-----------|---------|---------|
+| Ingest | CUE/BIN → .aaru | Dreamcast, Saturn, Mega CD, PC Engine CD, Neo Geo CD, PS1, PS2 CD |
+| Ingest | ISO → .aaru | PS2 DVD |
+| Render | .aaru → CUE/BIN | All CD-based systems |
+| Render | .aaru → ISO | All DVD-based systems |
+
+### Usage
+
+```
+dimg-tool convert -i <input> -o <output> [-s <system>] [-c <codec>]
+
+Systems: dc, saturn, megacd, pce, neogeo, ps1, ps2cd, ps2dvd, cd, dvd
+Codecs:  lzma (default), zstd, none
+```
 
 ## Size Comparison
 
@@ -89,52 +107,11 @@ Tested with one disc per system, CUE/BIN source format (redump).
 | PC Engine CD | 22 (2D/20A) | 496 MiB | 255.1 MiB (51.4%) | 255.3 MiB (51.4%) | PASS |
 | Neo Geo CD | 41 (1D/40A) | 694 MiB | 335.5 MiB (48.4%) | 336.6 MiB (48.5%) | PASS |
 
-## API Notes
-
-### Sector status handling
-
-The library marks all-zero sectors as `SectorStatusNotDumped` internally. This is correct
-behavior — the data IS preserved (zeros in, zeros out), the status is metadata indicating
-the sector had no content on the original disc.
-
-When reading back via `aaruf_read_sector_long`:
-- `return 0` (AARUF_STATUS_OK): sector has data, buffer filled
-- `return 1` (AARUF_STATUS_SECTOR_NOT_DUMPED): sector was empty, buffer is zeros
-- `return <0`: actual error
-
-For roundtrip verification, both status 0 and 1 are valid — check the buffer contents, not
-just the return code. For rendering back to CUE/BIN, write the buffer regardless of status.
-
-### Track setup for CUE/BIN import
-
-- `TrackEntry.start` = first LBA of the BIN file (includes pregap if present)
-- `TrackEntry.end` = last LBA of the BIN file
-- `TrackEntry.pregap` = 0 (set to actual value only if you need INDEX 01 metadata)
-- Write all sectors with `aaruf_write_sector_long(ctx, lba, false, data, SectorStatusDumped, 2352)`
-- `SectorStatusDumped = 0x1` (not 0 — zero means NotDumped in the DDT enum)
-
-### Mode1/2352 prefix/suffix handling
-
-The library automatically splits raw 2352-byte Mode1 sectors into:
-- 16-byte prefix (sync pattern + MSF header) — validated and stored/reconstructed
-- 2048-byte user data — stored in data blocks with compression
-- 288-byte suffix (ECC/EDC) — validated and stored/reconstructed
-
-All-zero sectors (common in pregap regions) are detected and marked as not-dumped.
-Sectors with correct ECC/EDC are stored with `SectorStatusMode1Correct` and the
-prefix/suffix is regenerated on read — no storage overhead.
-
-## Notes
-
-- All tracks written as raw 2352-byte sectors via `aaruf_write_sector_long`
-- Compression: FLAC for audio tracks (automatic), LZMA or zstd for data tracks
-- No subchannel data preserved in this test (CUE/BIN doesn't carry it)
-- zstd uses kCompressionZstd = 4 (pending upstream allocation)
-
 ## SHA-256 Roundtrip Verification
 
-Full cryptographic verification: SHA-256 of all raw BIN sectors vs SHA-256 of readback
-from .aaru (zstd-19). Empty pregap sectors (SECTOR_NOT_DUMPED) included as zeros in both hashes.
+Full cryptographic verification via `dimg-tool convert`: ingest to .aaru (zstd-19), render
+back to CUE/BIN or ISO, SHA-256 of output matches original. Empty pregap sectors
+(SECTOR_NOT_DUMPED) are included as zeros in both hashes.
 
 | System | Tracks | Sectors | SHA-256 | Result |
 |--------|--------|---------|---------|--------|
@@ -148,7 +125,30 @@ from .aaru (zstd-19). Empty pregap sectors (SECTOR_NOT_DUMPED) included as zeros
 | PS2 CD (MODE2) | 1 | 144,121 | `ee143e43...6eddf1bc` | PASS |
 | PS2 DVD (ISO) | 1 | 869,680 | `8b2ffcc5...7e5052d6` | PASS |
 
-All 9 disc images verified: **CUE/BIN/ISO → .aaru → readback produces identical SHA-256.**
+All 9 disc images verified: **ingest → .aaru → render produces identical SHA-256.**
+
+## Architecture
+
+```
+cmd_convert.c  — CLI parsing, format detection, dispatch
+disc.h/disc.c  — shared DiscLayout struct, system/format enums
+fmt_cue.c      — CUE/BIN parser (single + multi-file) and writer
+fmt_iso.c      — ISO reader and writer (2048-byte DVD sectors)
+fmt_aaru.c     — bridge to libaaruformat (ingest + render)
+```
+
+### Ingest flow (CUE/ISO → .aaru)
+
+1. Format parser fills `DiscLayout` (tracks, sector ranges, source file paths)
+2. `aaru_write()` creates .aaru image via `aaruf_create()`
+3. For CD: `aaruf_set_tracks()` with track layout, `aaruf_write_sector_long()` per sector
+4. For DVD: `aaruf_write_sector()` per sector (no track table needed)
+
+### Render flow (.aaru → CUE/ISO)
+
+1. `aaru_read_layout()` opens .aaru, populates `DiscLayout` from image metadata
+2. Format writer reads sectors via `aaruf_read_sector_long()` / `aaruf_read_sector()`
+3. Writes output file(s) (CUE+BIN or ISO)
 
 ## Fixes Applied to libaaru-ext
 
@@ -161,8 +161,7 @@ to match the original disc data (where the CRC was empty/zeroed).
 2 lines changed in `src/read.c` — both DDT v1 and v2 code paths.
 
 ## What's NOT tested yet
-- Subchannel data preservation (would need .sub files or raw dumps)
-- GDI format input (different track layout descriptor)
-- CHD input/output and size comparison
+
+- Subchannel data preservation (SBI files available for PS1)
 - Multi-session disc handling
 - Lead-in/lead-out sectors (negative sector addresses)

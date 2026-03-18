@@ -144,24 +144,19 @@ from .aaru (zstd-19). Empty pregap sectors (SECTOR_NOT_DUMPED) included as zeros
 | Mega CD | 35 | 255,826 | `643ab58a...eb3a652b` | PASS |
 | PC Engine CD | 22 | 221,262 | `a8a2d223...76474b3b` | PASS |
 | Neo Geo CD | 41 | 309,347 | `862e7038...deba4078` | PASS |
+| PS1 (MODE2) | 1 | 183,775 | `1ae17e78...899a852a` | PASS |
 
-All 6 disc images verified: **CUE/BIN → .aaru → readback produces identical SHA-256.**
+All 7 disc images verified: **CUE/BIN → .aaru → readback produces identical SHA-256.**
 
-## Known Limitations
+## Fixes Applied to libaaru-ext
 
-### PS1 (MODE2/2352) — EDC reconstruction on Mode 2 Form 2 sectors
+### Mode 2 Form 2 NoCrc EDC zeroing
 
-libaaruformat regenerates the EDC (4-byte error detection code at bytes 2348-2351) for
-Mode 2 Form 2 sectors that had an empty/zeroed CRC on the original disc. The status field
-correctly reports `SectorStatusMode2Form2NoCrc (6)` indicating the original had no CRC.
+Upstream libaaruformat leaves the 4-byte EDC field (bytes 2348-2351) uninitialized for
+Mode 2 Form 2 sectors with `SectorStatusMode2Form2NoCrc`. Our fix zeros these bytes
+to match the original disc data (where the CRC was empty/zeroed).
 
-User data (bytes 24-2347) is preserved exactly. Only the 4-byte EDC trailer differs.
-This affects a subset of sectors on PS1 discs — sectors 0-11 typically pass, some later
-sectors have regenerated CRC.
-
-For the romtholos pipeline this is acceptable: game data is intact. For bit-exact
-preservation, the original CRC bytes (typically zeros) would need to be stored as a
-sector tag and restored during rendering.
+2 lines changed in `src/read.c` — both DDT v1 and v2 code paths.
 
 ## What's NOT tested yet
 - Subchannel data preservation (would need .sub files or raw dumps)

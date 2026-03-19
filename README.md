@@ -67,18 +67,47 @@ alongside CUE/BIN inputs and embedded in the .aaru image.
 
 ## Building
 
-Requires [libaaruformat](https://github.com/aaru-dps/libaaruformat)
-in the sibling directory.
+Requires [libaaruformat](https://github.com/RomTholos/libaaruformat)
+in the sibling directory (`../libaaruformat`).
+
+### Development build
 
 ```sh
-# Static musl binary (portable)
-./build-release.sh v0.2.0
-
-# Development build
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Debug
 make
 ```
+
+### Release builds (static musl binaries)
+
+Requires [musl-cross-make](https://github.com/richfelker/musl-cross-make) toolchains.
+
+```sh
+# All architectures (x86_64, ARM, RISC-V)
+./build-release.sh v0.2.0
+
+# Single architecture
+./build-release.sh v0.2.0 x86_64
+
+# Multiple specific architectures
+./build-release.sh v0.2.0 arm riscv64
+```
+
+Output in `dist/`: static stripped binary + `.tar.gz` + `.sha256`.
+
+### Cross-compilation
+
+The build script handles cross-compilation automatically via `CMAKE_CROSSCOMPILING=ON`
+and architecture-specific C flags. libaaruformat's CMakeLists.txt skips its native arch
+flags when cross-compiling — the build script provides the correct flags instead.
+
+| Architecture | Toolchain triple | Key flags |
+|-------------|-----------------|-----------|
+| x86_64 | `x86_64-linux-musl` | (native defaults) |
+| ARM (NEON) | `arm-linux-musleabihf` | `-march=armv7-a+fp -mfpu=neon -mfloat-abi=hard` |
+| RISC-V 64 | `riscv64-linux-musl` | `-march=rv64gc -mabi=lp64d` |
+
+For ARM without NEON (e.g. Cortex-A8), change `-mfpu=neon` to `-mfpu=vfpv3-d16` in the build script.
 
 ## License
 

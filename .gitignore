@@ -6,3 +6,4 @@ dist/
 *.so
 dimg-tool
 .hg/
+CLAUDE.md

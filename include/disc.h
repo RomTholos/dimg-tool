@@ -82,4 +82,7 @@ uint32_t disc_sector_size(DiscSystem system);
 /* Map system name for display */
 const char *disc_system_name(DiscSystem system);
 
+/* Map system to machine-readable CLI name ("ps1", "dc", etc.) */
+const char *disc_system_cli_name(DiscSystem system);
+
 #endif /* DISC_H */

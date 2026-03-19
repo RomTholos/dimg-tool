@@ -112,6 +112,7 @@ int cue_parse(const char *cue_path, DiscSystem system, DiscLayout *layout)
     char line[1024];
     char current_file[512] = {0};
     int  count             = 0;
+    int  current_session   = 1;
 
     /* Temporary storage for INDEX 01 positions (MSF frames from FILE start) */
     int64_t index01[DISC_MAX_TRACKS];
@@ -122,6 +123,15 @@ int cue_parse(const char *cue_path, DiscSystem system, DiscLayout *layout)
         /* Strip leading whitespace */
         char *p = line;
         while(*p == ' ' || *p == '\t') p++;
+
+        /* REM SESSION directive (multi-session discs) */
+        if(strncmp(p, "REM SESSION ", 12) == 0)
+        {
+            current_session = atoi(p + 12);
+            if(current_session < 1)
+                current_session = 1;
+            continue;
+        }
 
         /* FILE directive */
         if(strncmp(p, "FILE ", 5) == 0)
@@ -166,8 +176,8 @@ int cue_parse(const char *cue_path, DiscSystem system, DiscLayout *layout)
             DiscTrack *t = &layout->tracks[count];
             memset(t, 0, sizeof(*t));
 
-            t->number = (uint8_t)atoi(p + 6);
-            t->session  = 1;
+            t->number  = (uint8_t)atoi(p + 6);
+            t->session = (uint8_t)current_session;
 
             DiscTrackType type;
             if(parse_track_type(p, &type) != 0)
@@ -373,12 +383,39 @@ int cue_write(const char *cue_path, const DiscLayout *layout, void *aaru_ctx)
     }
 
     const char *bin_name = path_basename(bin_path);
-    fprintf(cf, "FILE \"%s\" BINARY\n", bin_name);
+
+    /* Check if multi-session */
+    int multi_session = 0;
+    for(int i = 1; i < layout->track_count; i++)
+    {
+        if(layout->tracks[i].session != layout->tracks[0].session)
+        {
+            multi_session = 1;
+            break;
+        }
+    }
+
+    uint8_t last_session = 0;
+
+    if(!multi_session)
+    {
+        /* Single session: FILE once at top, no REM SESSION */
+        fprintf(cf, "FILE \"%s\" BINARY\n", bin_name);
+        last_session = layout->tracks[0].session;
+    }
 
     for(int i = 0; i < layout->track_count; i++)
     {
         const DiscTrack *t = &layout->tracks[i];
         int mm, ss, ff;
+
+        /* Multi-session: emit session marker + FILE when session changes */
+        if(multi_session && t->session != last_session)
+        {
+            fprintf(cf, "REM SESSION %02d\n", t->session);
+            fprintf(cf, "FILE \"%s\" BINARY\n", bin_name);
+            last_session = t->session;
+        }
 
         fprintf(cf, "  TRACK %02d %s\n", t->number, track_type_to_cue(t->type));
 

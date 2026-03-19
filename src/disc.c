@@ -74,3 +74,21 @@ const char *disc_system_name(DiscSystem system)
         default:                 return "Unknown";
     }
 }
+
+const char *disc_system_cli_name(DiscSystem system)
+{
+    switch(system)
+    {
+        case DISC_SYS_CD:        return "cd";
+        case DISC_SYS_DVD:       return "dvd";
+        case DISC_SYS_PS1:       return "ps1";
+        case DISC_SYS_PS2CD:     return "ps2cd";
+        case DISC_SYS_PS2DVD:    return "ps2dvd";
+        case DISC_SYS_MEGACD:    return "megacd";
+        case DISC_SYS_SATURN:    return "saturn";
+        case DISC_SYS_DREAMCAST: return "dc";
+        case DISC_SYS_PCE:       return "pce";
+        case DISC_SYS_NEOGEOCD:  return "neogeo";
+        default:                 return "unknown";
+    }
+}

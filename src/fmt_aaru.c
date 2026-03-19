@@ -188,6 +188,57 @@ int aaru_write(const char *aaru_path, const DiscLayout *layout,
     return DIMG_OK;
 }
 
+const char *aaru_detect_codec(void *aaru_ctx)
+{
+    assert(aaru_ctx != NULL);
+
+    aaruformat_context *ctx = (aaruformat_context *)aaru_ctx;
+
+    if(ctx->index_entries == NULL || utarray_len(ctx->index_entries) == 0)
+        return "unknown";
+
+    /* Find the first DataBlock in the index */
+    unsigned int count = utarray_len(ctx->index_entries);
+    for(unsigned int i = 0; i < count; i++)
+    {
+        IndexEntry *ie = (IndexEntry *)utarray_eltptr(ctx->index_entries, i);
+        if(ie == NULL)
+            continue;
+
+        /* DataBlock = 0x4B4C4244, UserData = 1 */
+        if(ie->blockType != 0x4B4C4244 || ie->dataType != 1)
+            continue;
+
+        /* Save position, seek to block, read header */
+        long saved = ftell(ctx->imageStream);
+        if(fseek(ctx->imageStream, (long)ie->offset, SEEK_SET) != 0)
+        {
+            fseek(ctx->imageStream, saved, SEEK_SET);
+            continue;
+        }
+
+        BlockHeader bh;
+        size_t nread = fread(&bh, 1, sizeof(bh), ctx->imageStream);
+        fseek(ctx->imageStream, saved, SEEK_SET);
+
+        if(nread != sizeof(bh))
+            continue;
+
+        switch(bh.compression)
+        {
+            case kCompressionNone:    return "none";
+            case kCompressionLzma:    return "lzma";
+            case kCompressionFlac:    return "flac";
+            case kCompressionLzmaCst: return "lzma";
+            case kCompressionZstd:    return "zstd";
+            case kCompressionZstdCst: return "zstd";
+            default:                  return "unknown";
+        }
+    }
+
+    return "unknown";
+}
+
 int aaru_read_layout(const char *aaru_path, DiscLayout *layout, void **ctx_out)
 {
     assert(aaru_path != NULL);

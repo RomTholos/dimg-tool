@@ -18,9 +18,9 @@ static void print_usage(void)
             "dimg-tool — disc image preservation and conversion\n"
             "\n"
             "Usage:\n"
-            "  dimg-tool info    <image>           Show image metadata\n"
-            "  dimg-tool convert -i <in> -o <out>  Convert between formats\n"
-            "  dimg-tool verify  <image>           Verify image integrity\n"
+            "  dimg-tool info    [-j|--json] <image>    Show image metadata\n"
+            "  dimg-tool convert -i <in> -o <out> [opts]  Convert between formats\n"
+            "  dimg-tool verify  <image>                Verify image integrity\n"
             "\n"
             "Formats: .aaru, .cue/.bin, .iso\n"
             "Run 'dimg-tool convert --help' for conversion options.\n");

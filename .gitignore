@@ -6,5 +6,7 @@ dist/
 *.so
 dimg-tool
 .hg/
+.hgignore
+.hgtags
 CLAUDE.md
 SENSITIVE.md

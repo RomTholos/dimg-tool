@@ -38,6 +38,7 @@ typedef enum {
     DISC_SYS_PS1       = 112,  /* PS1CD */
     DISC_SYS_PS2CD     = 113,  /* PS2CD */
     DISC_SYS_PS2DVD    = 114,  /* PS2DVD */
+    DISC_SYS_PSP       = 118,  /* UMD */
     DISC_SYS_MEGACD    = 150,  /* Sega Mega CD */
     DISC_SYS_SATURN    = 151,  /* Sega Saturn */
     DISC_SYS_DREAMCAST = 152,  /* Sega Dreamcast (GD-ROM) */

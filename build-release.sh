@@ -13,7 +13,7 @@
 
 set -eu
 
-VERSION="${1:-v0.2.0}"
+VERSION="${1:-v0.3.1}"
 shift || true
 
 MUSL_ROOT="${MUSL_ROOT:-$(dirname "$(command -v x86_64-linux-musl-gcc 2>/dev/null || echo /usr/local/musl/bin/x86_64-linux-musl-gcc)")}"

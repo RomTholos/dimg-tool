@@ -59,6 +59,7 @@ static void print_convert_usage(void)
             "  ps1      Sony PlayStation\n"
             "  ps2cd    Sony PlayStation 2 (CD)\n"
             "  ps2dvd   Sony PlayStation 2 (DVD)\n"
+            "  psp      Sony PlayStation Portable (UMD)\n"
             "  cd       Generic CD\n"
             "  dvd      Generic DVD\n"
             "\n"

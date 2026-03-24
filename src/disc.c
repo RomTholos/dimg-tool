@@ -35,6 +35,7 @@ int disc_parse_system(const char *name)
     if(strcmp(name, "ps1") == 0)       return DISC_SYS_PS1;
     if(strcmp(name, "ps2cd") == 0)     return DISC_SYS_PS2CD;
     if(strcmp(name, "ps2dvd") == 0)    return DISC_SYS_PS2DVD;
+    if(strcmp(name, "psp") == 0)       return DISC_SYS_PSP;
     if(strcmp(name, "cd") == 0)        return DISC_SYS_CD;
     if(strcmp(name, "dvd") == 0)       return DISC_SYS_DVD;
     return -1;
@@ -46,6 +47,7 @@ int disc_is_cd(DiscSystem system)
     {
         case DISC_SYS_DVD:
         case DISC_SYS_PS2DVD:
+        case DISC_SYS_PSP:
             return 0;
         default:
             return 1;
@@ -66,6 +68,7 @@ const char *disc_system_name(DiscSystem system)
         case DISC_SYS_PS1:       return "PlayStation";
         case DISC_SYS_PS2CD:     return "PlayStation 2 (CD)";
         case DISC_SYS_PS2DVD:    return "PlayStation 2 (DVD)";
+        case DISC_SYS_PSP:       return "PlayStation Portable";
         case DISC_SYS_MEGACD:    return "Mega CD";
         case DISC_SYS_SATURN:    return "Sega Saturn";
         case DISC_SYS_DREAMCAST: return "Dreamcast (GD-ROM)";
@@ -84,6 +87,7 @@ const char *disc_system_cli_name(DiscSystem system)
         case DISC_SYS_PS1:       return "ps1";
         case DISC_SYS_PS2CD:     return "ps2cd";
         case DISC_SYS_PS2DVD:    return "ps2dvd";
+        case DISC_SYS_PSP:       return "psp";
         case DISC_SYS_MEGACD:    return "megacd";
         case DISC_SYS_SATURN:    return "saturn";
         case DISC_SYS_DREAMCAST: return "dc";

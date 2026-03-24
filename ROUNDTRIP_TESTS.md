@@ -17,7 +17,7 @@
 | Direction | Formats | Systems |
 |-----------|---------|---------|
 | Ingest | CUE/BIN → .aaru | Dreamcast, Saturn, Mega CD, PC Engine CD, Neo Geo CD, PS1, PS2 CD |
-| Ingest | ISO → .aaru | PS2 DVD |
+| Ingest | ISO → .aaru | PS2 DVD, PSP |
 | Render | .aaru → CUE/BIN | All CD-based systems |
 | Render | .aaru → ISO | All DVD-based systems |
 
@@ -26,7 +26,7 @@
 ```
 dimg-tool convert -i <input> -o <output> [-s <system>] [-c <codec>]
 
-Systems: dc, saturn, megacd, pce, neogeo, ps1, ps2cd, ps2dvd, cd, dvd
+Systems: dc, saturn, megacd, pce, neogeo, ps1, ps2cd, ps2dvd, psp, cd, dvd
 Codecs:  lzma (default), zstd, none
 ```
 
@@ -96,7 +96,7 @@ Both codecs: 0.008 ms/sector — pure memory copy from cached block.
 
 ## Multi-System Results
 
-Tested with one disc per system, CUE/BIN source format (redump).
+Tested with one disc per system, CUE/BIN and ISO source formats (redump).
 
 | System | Tracks (data/audio) | Original | .aaru LZMA | .aaru zstd-19 | Roundtrip |
 |--------|---------------------|----------|------------|---------------|-----------|
@@ -106,6 +106,7 @@ Tested with one disc per system, CUE/BIN source format (redump).
 | Mega CD | 35 (1D/34A) | 574 MiB | 296.8 MiB (51.7%) | 298.6 MiB (52.0%) | PASS |
 | PC Engine CD | 22 (2D/20A) | 496 MiB | 255.1 MiB (51.4%) | 255.3 MiB (51.4%) | PASS |
 | Neo Geo CD | 41 (1D/40A) | 694 MiB | 335.5 MiB (48.4%) | 336.6 MiB (48.5%) | PASS |
+| PSP (ISO) | 1 (1D) | 699 MiB | — | 475.0 MiB (68.0%) | PASS |
 
 ## SHA-256 Roundtrip Verification
 
@@ -124,8 +125,9 @@ back to CUE/BIN or ISO, SHA-256 of output matches original. Empty pregap sectors
 | PS1 (MODE2) | 1 | 183,775 | `1ae17e78...899a852a` | PASS |
 | PS2 CD (MODE2) | 1 | 144,121 | `ee143e43...6eddf1bc` | PASS |
 | PS2 DVD (ISO) | 1 | 869,680 | `8b2ffcc5...7e5052d6` | PASS |
+| PSP (ISO) | 1 | 357,664 | `4016b93b...73bf8a6c` | PASS |
 
-All 9 disc images verified: **ingest → .aaru → render produces identical SHA-256.**
+All 10 disc images verified: **ingest → .aaru → render produces identical SHA-256.**
 
 ## Architecture
 

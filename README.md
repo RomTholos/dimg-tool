@@ -19,8 +19,9 @@ but for CD and DVD-based console systems.
 | PlayStation | CUE/BIN | MODE2/2352, SBI subchannel |
 | PlayStation 2 (CD) | CUE/BIN | MODE2/2352 |
 | PlayStation 2 (DVD) | ISO | 2048-byte sectors |
+| PlayStation Portable | ISO | 2048-byte UMD sectors |
 
-All 9 systems verified with SHA-256 lossless roundtrips.
+All 10 systems verified with SHA-256 lossless roundtrips.
 
 ## Usage
 
@@ -48,7 +49,7 @@ dimg-tool convert -i game.aaru -o game.iso
 
 ### Systems (-s)
 
-`dc` `saturn` `megacd` `pce` `neogeo` `ps1` `ps2cd` `ps2dvd` `cd` `dvd`
+`dc` `saturn` `megacd` `pce` `neogeo` `ps1` `ps2cd` `ps2dvd` `psp` `cd` `dvd`
 
 ### Compression (-c)
 
@@ -84,13 +85,13 @@ Requires [musl-cross-make](https://github.com/richfelker/musl-cross-make) toolch
 
 ```sh
 # All architectures (x86_64, ARM, RISC-V)
-./build-release.sh v0.2.0
+./build-release.sh v0.3.1
 
 # Single architecture
-./build-release.sh v0.2.0 x86_64
+./build-release.sh v0.3.1 x86_64
 
 # Multiple specific architectures
-./build-release.sh v0.2.0 arm riscv64
+./build-release.sh v0.3.1 arm riscv64
 ```
 
 Output in `dist/`: static stripped binary + `.tar.gz` + `.sha256`.

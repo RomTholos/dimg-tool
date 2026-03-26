@@ -339,9 +339,9 @@ int cue_parse(const char *cue_path, DiscSystem system, DiscLayout *layout)
     return DIMG_OK;
 }
 
-/* Helper: read sectors from aaru and write to a BIN file.
+/* Read sectors from aaru and write to a BIN file.
  * Returns DIMG_OK on success. */
-static int write_sectors_to_bin(FILE *bf, void *aaru_ctx,
+int write_sectors_to_bin(FILE *bf, void *aaru_ctx,
                                 int64_t first_lba, int64_t last_lba,
                                 int64_t total_for_progress)
 {

@@ -21,6 +21,8 @@ DiscFormat disc_detect_format(const char *path)
        strcasecmp(dot, ".aaruf") == 0 ||
        strcasecmp(dot, ".dicf") == 0)
         return DISC_FMT_AARU;
+    if(strcasecmp(dot, ".bin") == 0)
+        return DISC_FMT_BIN;
 
     return DISC_FMT_UNKNOWN;
 }

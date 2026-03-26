@@ -72,7 +72,10 @@ static void print_convert_usage(void)
             "Options:\n"
             "  -j, --json     Print JSON summary to stdout on success\n"
             "  --verify       Roundtrip verify after ingest (CUE/ISO → .aaru only)\n"
-            "  --multi-bin    Render per-track BIN files (Redump multi-BIN format)\n");
+            "  --multi-bin    Render per-track BIN files (Redump multi-BIN format)\n"
+            "  -t <tracks>    Extract specific tracks (render only, e.g. 1,3-5,8)\n"
+            "                 .bin output requires exactly 1 track\n"
+            "                 .cue output with -t forces multi-BIN\n");
 }
 
 /* Build libaaruformat options string from codec name */
@@ -352,12 +355,64 @@ cleanup:
     return verify_result;
 }
 
+/*
+ * Parse track specification string into a selection array.
+ * Supports: single (3), list (1,3,5), range (1-5), mixed (1,3-5,8).
+ * selected[] is indexed by track number (1-based), size DISC_MAX_TRACKS+1.
+ * Returns 0 on success, -1 on parse error.
+ */
+static int parse_track_spec(const char *spec, bool selected[DISC_MAX_TRACKS + 1])
+{
+    memset(selected, 0, sizeof(bool) * (DISC_MAX_TRACKS + 1));
+
+    const char *p = spec;
+    while(*p)
+    {
+        /* Skip whitespace */
+        while(*p == ' ') p++;
+        if(*p == '\0') break;
+
+        /* Parse first number */
+        char *end;
+        long a = strtol(p, &end, 10);
+        if(end == p || a < 1 || a > DISC_MAX_TRACKS)
+            return -1;
+        p = end;
+
+        if(*p == '-')
+        {
+            /* Range: N-M */
+            p++;
+            long b = strtol(p, &end, 10);
+            if(end == p || b < a || b > DISC_MAX_TRACKS)
+                return -1;
+            p = end;
+            for(long t = a; t <= b; t++)
+                selected[t] = true;
+        }
+        else
+        {
+            /* Single track */
+            selected[a] = true;
+        }
+
+        /* Expect comma or end */
+        if(*p == ',')
+            p++;
+        else if(*p != '\0')
+            return -1;
+    }
+
+    return 0;
+}
+
 int cmd_convert(int argc, char **argv)
 {
     const char *input  = NULL;
     const char *output = NULL;
     const char *system = NULL;
     const char *codec  = NULL;
+    const char *track_spec = NULL;
     bool json_output   = false;
     bool verify        = false;
     bool multi_bin     = false;
@@ -373,6 +428,8 @@ int cmd_convert(int argc, char **argv)
             system = argv[++i];
         else if(strcmp(argv[i], "-c") == 0 && i + 1 < argc)
             codec = argv[++i];
+        else if(strcmp(argv[i], "-t") == 0 && i + 1 < argc)
+            track_spec = argv[++i];
         else if(strcmp(argv[i], "-j") == 0 || strcmp(argv[i], "--json") == 0)
             json_output = true;
         else if(strcmp(argv[i], "--verify") == 0)
@@ -438,6 +495,27 @@ int cmd_convert(int argc, char **argv)
     if(multi_bin && out_fmt != DISC_FMT_CUE)
     {
         fprintf(stderr, "--multi-bin is only valid for CUE output\n");
+        return DIMG_ERR_ARGS;
+    }
+
+    /* -t only valid for render (.aaru input) */
+    if(track_spec != NULL && in_fmt != DISC_FMT_AARU)
+    {
+        fprintf(stderr, "-t is only valid for render (input must be .aaru)\n");
+        return DIMG_ERR_ARGS;
+    }
+
+    /* .bin output requires -t */
+    if(out_fmt == DISC_FMT_BIN && track_spec == NULL)
+    {
+        fprintf(stderr, ".bin output requires -t to select a track\n");
+        return DIMG_ERR_ARGS;
+    }
+
+    /* .bin output not valid as ingest target */
+    if(out_fmt == DISC_FMT_BIN && in_fmt != DISC_FMT_AARU)
+    {
+        fprintf(stderr, ".bin output only valid for render from .aaru\n");
         return DIMG_ERR_ARGS;
     }
 
@@ -566,19 +644,101 @@ int cmd_convert(int argc, char **argv)
     if(rc != DIMG_OK)
         return rc;
 
+    /* Apply track filter if -t specified */
+    DiscLayout render_layout = layout;
+    bool track_selected[DISC_MAX_TRACKS + 1];
+    int filtered_count = 0;
+
+    if(track_spec != NULL)
+    {
+        if(parse_track_spec(track_spec, track_selected) != 0)
+        {
+            fprintf(stderr, "Invalid track specification: %s\n", track_spec);
+            aaruf_close(aaru_ctx);
+            return DIMG_ERR_ARGS;
+        }
+
+        /* Build filtered layout with only selected tracks */
+        render_layout.track_count = 0;
+        for(int i = 0; i < layout.track_count; i++)
+        {
+            if(track_selected[layout.tracks[i].number])
+            {
+                render_layout.tracks[render_layout.track_count++] =
+                    layout.tracks[i];
+                filtered_count++;
+            }
+        }
+
+        /* Validate all requested tracks were found */
+        int requested = 0;
+        for(int t = 1; t <= DISC_MAX_TRACKS; t++)
+            if(track_selected[t]) requested++;
+
+        if(filtered_count != requested)
+        {
+            fprintf(stderr, "Some requested tracks not found in image\n");
+            aaruf_close(aaru_ctx);
+            return DIMG_ERR_ARGS;
+        }
+
+        if(filtered_count == 0)
+        {
+            fprintf(stderr, "No tracks selected\n");
+            aaruf_close(aaru_ctx);
+            return DIMG_ERR_ARGS;
+        }
+
+        /* .bin requires exactly 1 track */
+        if(out_fmt == DISC_FMT_BIN && filtered_count != 1)
+        {
+            fprintf(stderr, ".bin output requires exactly 1 track (-t), got %d\n",
+                    filtered_count);
+            aaruf_close(aaru_ctx);
+            return DIMG_ERR_ARGS;
+        }
+
+        /* .cue with -t forces multi-BIN */
+        if(out_fmt == DISC_FMT_CUE)
+            multi_bin = true;
+    }
+
     fprintf(stderr, "Converting: %s → %s\n", input, output);
     fprintf(stderr, "System:     %s\n", disc_system_name(layout.system));
-    fprintf(stderr, "Tracks:     %d\n", layout.track_count);
+    fprintf(stderr, "Tracks:     %d%s\n", render_layout.track_count,
+            track_spec ? " (filtered)" : "");
     fprintf(stderr, "Sectors:    %" PRId64 "\n", layout.total_sectors);
 
     switch(out_fmt)
     {
         case DISC_FMT_ISO:
-            rc = iso_write(output, &layout, aaru_ctx);
+            rc = iso_write(output, &render_layout, aaru_ctx);
             break;
         case DISC_FMT_CUE:
-            rc = cue_write(output, &layout, aaru_ctx, multi_bin);
+            rc = cue_write(output, &render_layout, aaru_ctx, multi_bin);
             break;
+        case DISC_FMT_BIN:
+        {
+            const DiscTrack *t = &render_layout.tracks[0];
+            fprintf(stderr, "  Track %d [%s] sectors %" PRId64 "-%" PRId64 "\n",
+                    t->number,
+                    t->type == DISC_TRACK_AUDIO ? "AUDIO" :
+                    t->type == DISC_TRACK_MODE1 ? "MODE1" :
+                    t->type == DISC_TRACK_MODE2 ? "MODE2" : "DATA",
+                    t->start, t->end);
+
+            FILE *bf = fopen(output, "wb");
+            if(bf == NULL)
+            {
+                fprintf(stderr, "Cannot create output: %s\n", output);
+                aaruf_close(aaru_ctx);
+                return DIMG_ERR_IO;
+            }
+            rc = write_sectors_to_bin(bf, aaru_ctx, t->start, t->end,
+                                      t->end - t->start + 1);
+            fclose(bf);
+            break;
+        }
         default:
             fprintf(stderr, "Unsupported output format for render\n");
             rc = DIMG_ERR_UNSUPPORTED;
@@ -596,23 +756,30 @@ int cmd_convert(int argc, char **argv)
         int64_t in_size = file_size(input);
         int64_t out_size = 0;
 
-        if(multi_bin)
+        if(multi_bin || out_fmt == DISC_FMT_BIN)
         {
-            /* Sum per-track BIN file sizes */
-            char stem[512];
-            size_t olen = strlen(output);
-            if(olen >= 4 && olen < sizeof(stem))
+            if(out_fmt == DISC_FMT_BIN)
             {
-                memcpy(stem, output, olen - 4);
-                stem[olen - 4] = '\0';
+                out_size = file_size(output);
             }
-            for(int t = 0; t < layout.track_count; t++)
+            else
             {
-                char tpath[512];
-                snprintf(tpath, sizeof(tpath), "%s (Track %02d).bin",
-                         stem, layout.tracks[t].number);
-                int64_t s = file_size(tpath);
-                if(s > 0) out_size += s;
+                /* Sum per-track BIN file sizes */
+                char stem[512];
+                size_t olen = strlen(output);
+                if(olen >= 4 && olen < sizeof(stem))
+                {
+                    memcpy(stem, output, olen - 4);
+                    stem[olen - 4] = '\0';
+                }
+                for(int t = 0; t < render_layout.track_count; t++)
+                {
+                    char tpath[512];
+                    snprintf(tpath, sizeof(tpath), "%s (Track %02d).bin",
+                             stem, render_layout.tracks[t].number);
+                    int64_t s = file_size(tpath);
+                    if(s > 0) out_size += s;
+                }
             }
         }
         else
@@ -624,7 +791,7 @@ int cmd_convert(int argc, char **argv)
         printf("  \"input\": \"%s\",\n", input);
         printf("  \"output\": \"%s\",\n", output);
         printf("  \"system\": \"%s\",\n", disc_system_cli_name(layout.system));
-        printf("  \"tracks\": %d,\n", layout.track_count);
+        printf("  \"tracks\": %d,\n", render_layout.track_count);
         printf("  \"sectors\": %" PRId64 ",\n", layout.total_sectors);
         printf("  \"input_size\": %" PRId64 ",\n", in_size < 0 ? 0 : in_size);
         printf("  \"output_size\": %" PRId64 ",\n", out_size < 0 ? 0 : out_size);

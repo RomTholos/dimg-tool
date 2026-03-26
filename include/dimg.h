@@ -8,6 +8,7 @@
 #define DIMG_H
 
 #include <stdint.h>
+#include <stdio.h>
 
 /* Exit codes */
 #define DIMG_OK              0
@@ -19,7 +20,7 @@
 
 /* Version (set at build time, fallback here) */
 #ifndef DIMG_VERSION
-#define DIMG_VERSION "0.3.2"
+#define DIMG_VERSION "0.3.3"
 #endif
 
 /* Subcommands */
@@ -30,5 +31,11 @@ int cmd_verify(int argc, char **argv);
 /* Detect the data compression codec used in an opened .aaru image.
  * Returns a static string: "lzma", "zstd", "flac", or "none". */
 const char *aaru_detect_codec(void *aaru_ctx);
+
+/* Read sectors [first_lba..last_lba] from aaru and write to an open BIN file.
+ * total_for_progress is used for stderr progress display. */
+int write_sectors_to_bin(FILE *bf, void *aaru_ctx,
+                         int64_t first_lba, int64_t last_lba,
+                         int64_t total_for_progress);
 
 #endif /* DIMG_H */

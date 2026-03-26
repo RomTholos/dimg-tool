@@ -24,7 +24,8 @@ typedef enum {
     DISC_FMT_UNKNOWN,
     DISC_FMT_CUE,
     DISC_FMT_ISO,
-    DISC_FMT_AARU
+    DISC_FMT_AARU,
+    DISC_FMT_BIN       /* Raw sector output (single track, render only) */
 } DiscFormat;
 
 /*

@@ -23,7 +23,7 @@ if [ "${1:-}" = "--clean" ]; then
     shift
 fi
 
-VERSION="${1:-v0.3.2}"
+VERSION="${1:-v0.3.3}"
 shift || true
 
 MUSL_ROOT="${MUSL_ROOT:-$(dirname "$(command -v x86_64-linux-musl-gcc 2>/dev/null || echo /usr/local/musl/bin/x86_64-linux-musl-gcc)")}"

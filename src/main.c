@@ -42,6 +42,11 @@ int main(int argc, char **argv)
         return cmd_convert(argc - 1, argv + 1);
     else if(strcmp(cmd, "verify") == 0)
         return cmd_verify(argc - 1, argv + 1);
+    else if(strcmp(cmd, "--version") == 0 || strcmp(cmd, "-V") == 0)
+    {
+        printf("dimg-tool %s\n", DIMG_VERSION);
+        return DIMG_OK;
+    }
     else if(strcmp(cmd, "--help") == 0 || strcmp(cmd, "-h") == 0)
     {
         print_usage();

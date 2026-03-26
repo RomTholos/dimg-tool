@@ -64,8 +64,10 @@ typedef struct {
     DiscSystem  system;
     DiscFormat  source_format;
     int         track_count;
+    int         is_multi_bin;    /* 1 if source was multi-BIN CUE */
     DiscTrack   tracks[DISC_MAX_TRACKS];
     int64_t     total_sectors;
+    char        catalog[14];     /* CD MCN/CATALOG (13 digits + NUL), empty if absent */
 } DiscLayout;
 
 /* Detect format from file extension */

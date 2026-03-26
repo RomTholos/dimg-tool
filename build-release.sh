@@ -2,62 +2,88 @@
 # Build static dimg-tool binaries for release.
 #
 # Usage:
-#   ./build-release.sh [version] [arch...]
+#   ./build-release.sh [--clean] [version] [arch...]
 #
 # Examples:
-#   ./build-release.sh v0.2.0              # all architectures
-#   ./build-release.sh v0.2.0 x86_64       # x86_64 only
-#   ./build-release.sh v0.2.0 arm riscv64  # ARM + RISC-V only
+#   ./build-release.sh v0.3.1              # all architectures
+#   ./build-release.sh v0.3.1 x86_64       # x86_64 only
+#   ./build-release.sh v0.3.1 arm riscv64  # ARM + RISC-V only
+#   ./build-release.sh --clean v0.3.1      # rebuild libaaruformat from scratch
 #
 # Requires musl-cross-make toolchains in MUSL_ROOT.
 
 set -eu
 
-VERSION="${1:-v0.3.1}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Parse --clean flag
+CLEAN=0
+if [ "${1:-}" = "--clean" ]; then
+    CLEAN=1
+    shift
+fi
+
+VERSION="${1:-v0.3.2}"
 shift || true
 
 MUSL_ROOT="${MUSL_ROOT:-$(dirname "$(command -v x86_64-linux-musl-gcc 2>/dev/null || echo /usr/local/musl/bin/x86_64-linux-musl-gcc)")}"
-LIBAARU="../libaaruformat"
-DIST="$(cd "$(dirname "$0")" && pwd)/dist"
+LIBAARU="${SCRIPT_DIR}/../libaaruformat"
+DIST="${SCRIPT_DIR}/dist"
 
 mkdir -p "$DIST"
 
-# Architecture definitions: name, musl triple, cmake system processor
-ARCHS="
-x86_64:x86_64-linux-musl:x86_64
-arm:arm-linux-musleabihf:arm
-riscv64:riscv64-linux-musl:riscv64
-"
+ALL_ARCHS="x86_64 arm aarch64 riscv64"
 
 # Filter to requested architectures (default: all)
-requested="${*:-x86_64 arm riscv64}"
+requested="${*:-$ALL_ARCHS}"
+
+# Architecture config: triple and extra C flags per arch
+arch_triple() {
+    case "$1" in
+        x86_64)  echo "x86_64-linux-musl" ;;
+        arm)     echo "arm-linux-musleabihf" ;;
+        aarch64) echo "aarch64-linux-musl" ;;
+        riscv64) echo "riscv64-linux-musl" ;;
+    esac
+}
+
+arch_processor() {
+    case "$1" in
+        x86_64)  echo "x86_64" ;;
+        arm)     echo "arm" ;;
+        aarch64) echo "aarch64" ;;
+        riscv64) echo "riscv64" ;;
+    esac
+}
+
+arch_flags() {
+    case "$1" in
+        arm)     echo "-march=armv7-a+fp -mfpu=neon -mfloat-abi=hard" ;;
+        riscv64) echo "-march=rv64gc -mabi=lp64d" ;;
+        *)       echo "" ;;
+    esac
+}
 
 build_libaaruformat() {
     arch_name="$1"
     triple="$2"
     processor="$3"
+    extra_flags="$4"
     builddir="$LIBAARU/build-musl-${arch_name}"
 
+    if [ "$CLEAN" = 1 ] && [ -d "$builddir" ]; then
+        echo "=== Cleaning libaaruformat (${arch_name}) ==="
+        rm -rf "$builddir"
+    fi
+
     if [ -f "$builddir/libaaruformat.a" ]; then
+        echo "=== libaaruformat (${arch_name}) up to date ==="
         return
     fi
 
     echo "=== Building libaaruformat (${arch_name}) ==="
     mkdir -p "$builddir"
     cd "$builddir"
-
-    # Cross-compilation: set CMAKE_CROSSCOMPILING so libaaruformat
-    # skips its native arch flags. We provide our own via CMAKE_C_FLAGS.
-    extra_flags=""
-    case "$arch_name" in
-        arm)
-            # ARM with NEON for SIMD (CRC64, checksums)
-            extra_flags="-march=armv7-a+fp -mfpu=neon -mfloat-abi=hard"
-            ;;
-        riscv64)
-            extra_flags="-march=rv64gc -mabi=lp64d"
-            ;;
-    esac
 
     cmake .. \
         -DCMAKE_C_COMPILER="${MUSL_ROOT}/${triple}-gcc" \
@@ -77,25 +103,26 @@ build_libaaruformat() {
 build_dimg_tool() {
     arch_name="$1"
     triple="$2"
+    extra_flags="$3"
     libdir="$LIBAARU/build-musl-${arch_name}"
     incdir="$LIBAARU/include"
     inc3p="$LIBAARU/3rdparty"
     binary="dimg-tool-${VERSION}-linux-${arch_name}"
 
-    # Match arch flags used for libaaruformat
-    extra_flags=""
-    case "$arch_name" in
-        arm)    extra_flags="-march=armv7-a+fp -mfpu=neon -mfloat-abi=hard" ;;
-        riscv64) extra_flags="-march=rv64gc -mabi=lp64d" ;;
-    esac
-
     echo "=== Building dimg-tool ${VERSION} (${arch_name}) ==="
     # shellcheck disable=SC2086
     "${MUSL_ROOT}/${triple}-gcc" -O2 -static -Wno-unknown-pragmas $extra_flags \
         -o "$DIST/$binary" \
-        src/main.c src/cmd_info.c src/cmd_convert.c src/cmd_verify.c \
-        src/disc.c src/fmt_aaru.c src/fmt_cue.c src/fmt_iso.c src/fmt_sbi.c \
-        -Iinclude -I"$incdir" -I"$inc3p/BLAKE3/c" -I"$inc3p/uthash/src" \
+        "${SCRIPT_DIR}/src/main.c" \
+        "${SCRIPT_DIR}/src/cmd_info.c" \
+        "${SCRIPT_DIR}/src/cmd_convert.c" \
+        "${SCRIPT_DIR}/src/cmd_verify.c" \
+        "${SCRIPT_DIR}/src/disc.c" \
+        "${SCRIPT_DIR}/src/fmt_aaru.c" \
+        "${SCRIPT_DIR}/src/fmt_cue.c" \
+        "${SCRIPT_DIR}/src/fmt_iso.c" \
+        "${SCRIPT_DIR}/src/fmt_sbi.c" \
+        -I"${SCRIPT_DIR}/include" -I"$incdir" -I"$inc3p/BLAKE3/c" -I"$inc3p/uthash/src" \
         "$libdir/libaaruformat.a" \
         "$libdir/libzstd_static.a" \
         "$libdir/libblake3.a" \
@@ -113,16 +140,19 @@ build_dimg_tool() {
 }
 
 # Build each requested architecture
-for entry in $ARCHS; do
-    arch_name="${entry%%:*}"
-    rest="${entry#*:}"
-    triple="${rest%%:*}"
-    processor="${rest#*:}"
-
+for arch_name in $ALL_ARCHS; do
     case " $requested " in
         *" $arch_name "*)
-            build_libaaruformat "$arch_name" "$triple" "$processor"
-            build_dimg_tool "$arch_name" "$triple"
+            triple="$(arch_triple "$arch_name")"
+            processor="$(arch_processor "$arch_name")"
+            extra_flags="$(arch_flags "$arch_name")"
+
+            if ! command -v "${MUSL_ROOT}/${triple}-gcc" > /dev/null 2>&1; then
+                echo "=== Skipping ${arch_name}: ${triple}-gcc not found ==="
+                continue
+            fi
+            build_libaaruformat "$arch_name" "$triple" "$processor" "$extra_flags"
+            build_dimg_tool "$arch_name" "$triple" "$extra_flags"
             ;;
     esac
 done

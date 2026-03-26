@@ -19,7 +19,7 @@
 
 /* Version (set at build time, fallback here) */
 #ifndef DIMG_VERSION
-#define DIMG_VERSION "0.3.1"
+#define DIMG_VERSION "0.3.2"
 #endif
 
 /* Subcommands */

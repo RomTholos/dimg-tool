@@ -98,6 +98,15 @@ int aaru_write(const char *aaru_path, const DiscLayout *layout,
             aaruf_close(ctx);
             return DIMG_ERR_FORMAT;
         }
+
+        /* Write MCN/CATALOG if present */
+        if(layout->catalog[0] != '\0')
+        {
+            int32_t mcn_res = aaruf_write_media_tag(ctx,
+                (const uint8_t *)layout->catalog, kMediaTagCdMcn, 13);
+            if(mcn_res != 0)
+                fprintf(stderr, "Warning: failed to write MCN: %d\n", mcn_res);
+        }
     }
 
     /* Write sectors from source files */
@@ -305,6 +314,17 @@ int aaru_read_layout(const char *aaru_path, DiscLayout *layout, void **ctx_out)
             dt->sector_size  = SECTOR_RAW;
             dt->bin_path[0]  = '\0';
             dt->bin_offset   = 0;
+        }
+
+        /* Read MCN/CATALOG if available */
+        uint32_t mcn_len = 13;
+        uint8_t mcn_buf[13];
+        int32_t mcn_res = aaruf_read_media_tag(ctx, mcn_buf, kMediaTagCdMcn,
+                                                &mcn_len);
+        if(mcn_res == AARUF_STATUS_OK && mcn_len == 13)
+        {
+            memcpy(layout->catalog, mcn_buf, 13);
+            layout->catalog[13] = '\0';
         }
     }
     else

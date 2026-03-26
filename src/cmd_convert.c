@@ -25,7 +25,8 @@
 int iso_parse(const char *iso_path, DiscSystem system, DiscLayout *layout);
 int iso_write(const char *iso_path, const DiscLayout *layout, void *aaru_ctx);
 int cue_parse(const char *cue_path, DiscSystem system, DiscLayout *layout);
-int cue_write(const char *cue_path, const DiscLayout *layout, void *aaru_ctx);
+int cue_write(const char *cue_path, const DiscLayout *layout, void *aaru_ctx,
+              bool multi_bin);
 int aaru_write(const char *aaru_path, const DiscLayout *layout,
                const char *options, const char *sbi_path);
 int aaru_read_layout(const char *aaru_path, DiscLayout *layout, void **ctx_out);
@@ -70,7 +71,8 @@ static void print_convert_usage(void)
             "\n"
             "Options:\n"
             "  -j, --json     Print JSON summary to stdout on success\n"
-            "  --verify       Roundtrip verify after ingest (CUE/ISO → .aaru only)\n");
+            "  --verify       Roundtrip verify after ingest (CUE/ISO → .aaru only)\n"
+            "  --multi-bin    Render per-track BIN files (Redump multi-BIN format)\n");
 }
 
 /* Build libaaruformat options string from codec name */
@@ -118,11 +120,52 @@ static int64_t file_size(const char *path)
     return (int64_t)st.st_size;
 }
 
+/* Detect if original layout was multi-BIN (different bin_path per track) */
+static int detect_multi_bin(const DiscLayout *layout)
+{
+    if(layout->track_count <= 1)
+        return 0;
+    for(int i = 1; i < layout->track_count; i++)
+        if(strcmp(layout->tracks[0].bin_path, layout->tracks[i].bin_path) != 0)
+            return 1;
+    return 0;
+}
+
+/* Clean up temp directory: remove per-track BINs, merged BIN, CUE, then dir */
+static void cleanup_verify_temp(const char *tmpdir, const DiscLayout *layout,
+                                int was_multi_bin)
+{
+    char path[512];
+
+    if(was_multi_bin)
+    {
+        for(int i = 0; i < layout->track_count; i++)
+        {
+            snprintf(path, sizeof(path), "%s/verify (Track %02d).bin",
+                     tmpdir, layout->tracks[i].number);
+            unlink(path);
+        }
+    }
+    else
+    {
+        snprintf(path, sizeof(path), "%s/verify.bin", tmpdir);
+        unlink(path);
+    }
+
+    snprintf(path, sizeof(path), "%s/verify.cue", tmpdir);
+    unlink(path);
+    snprintf(path, sizeof(path), "%s/verify.iso", tmpdir);
+    unlink(path);
+    rmdir(tmpdir);
+}
+
 /*
  * Roundtrip verification for ingest:
  * 1. Render .aaru → temp CUE/BIN or ISO
  * 2. SHA-256 compare each output file against original input
  * 3. Clean up temp files
+ *
+ * For CUE: auto-detects multi-BIN and verifies per-track for strongest guarantee.
  *
  * Returns DIMG_OK on match, DIMG_ERR_VERIFY on mismatch.
  */
@@ -155,10 +198,14 @@ static int verify_roundtrip(
         return rc;
     }
 
-    fprintf(stderr, "Verifying: roundtrip %s → %s\n", aaru_path, ext + 1);
+    /* Auto-detect multi-BIN from original layout */
+    int orig_multi_bin = (in_fmt == DISC_FMT_CUE) ? detect_multi_bin(original_layout) : 0;
+
+    fprintf(stderr, "Verifying: roundtrip %s → %s%s\n", aaru_path, ext + 1,
+            orig_multi_bin ? " (multi-BIN)" : "");
 
     if(in_fmt == DISC_FMT_CUE)
-        rc = cue_write(tmp_out, &render_layout, aaru_ctx);
+        rc = cue_write(tmp_out, &render_layout, aaru_ctx, orig_multi_bin);
     else
         rc = iso_write(tmp_out, &render_layout, aaru_ctx);
 
@@ -166,20 +213,10 @@ static int verify_roundtrip(
 
     if(rc != DIMG_OK)
     {
-        /* Cleanup */
-        unlink(tmp_out);
-        rmdir(tmpdir);
+        cleanup_verify_temp(tmpdir, &render_layout, orig_multi_bin);
         return rc;
     }
 
-    /* For CUE: compare the .bin file (the data).
-     * The rendered .cue always uses a single .bin, so compare each
-     * original track source against the corresponding portion.
-     * For simplicity, compare the full rendered .bin against all
-     * original source data concatenated.
-     *
-     * For ISO: compare the single file directly.
-     */
     int verify_result = DIMG_OK;
 
     if(in_fmt == DISC_FMT_ISO)
@@ -204,18 +241,51 @@ static int verify_roundtrip(
             verify_result = DIMG_ERR_VERIFY;
         }
     }
+    else if(orig_multi_bin)
+    {
+        /* Multi-BIN: compare each per-track rendered BIN against original */
+        for(int t = 0; t < original_layout->track_count; t++)
+        {
+            const DiscTrack *dt = &original_layout->tracks[t];
+
+            char rendered_track[512];
+            snprintf(rendered_track, sizeof(rendered_track),
+                     "%s/verify (Track %02d).bin", tmpdir, dt->number);
+
+            uint8_t hash_orig[SHA256_DIGEST_LENGTH];
+            uint8_t hash_render[SHA256_DIGEST_LENGTH];
+
+            if(sha256_file(dt->bin_path, hash_orig) != 0)
+            {
+                fprintf(stderr, "Failed to hash original track %d: %s\n",
+                        dt->number, dt->bin_path);
+                verify_result = DIMG_ERR_IO;
+                break;
+            }
+
+            if(sha256_file(rendered_track, hash_render) != 0)
+            {
+                fprintf(stderr, "Failed to hash rendered track %d: %s\n",
+                        dt->number, rendered_track);
+                verify_result = DIMG_ERR_IO;
+                break;
+            }
+
+            if(memcmp(hash_orig, hash_render, SHA256_DIGEST_LENGTH) != 0)
+            {
+                fprintf(stderr, "VERIFY FAILED: Track %d BIN mismatch\n",
+                        dt->number);
+                verify_result = DIMG_ERR_VERIFY;
+                break;
+            }
+        }
+    }
     else
     {
-        /* CUE/BIN: rendered output is a single .bin file.
-         * Hash each original track source and compare sector-by-sector
-         * against the rendered .bin.
-         *
-         * The rendered .bin is the same extension with .bin instead of .cue.
-         */
+        /* Single-BIN: compare rendered merged BIN against concatenated originals */
         char rendered_bin[512];
         snprintf(rendered_bin, sizeof(rendered_bin), "%s/verify.bin", tmpdir);
 
-        /* Hash rendered bin */
         uint8_t hash_render[SHA256_DIGEST_LENGTH];
         if(sha256_file(rendered_bin, hash_render) != 0)
         {
@@ -224,7 +294,6 @@ static int verify_roundtrip(
             goto cleanup;
         }
 
-        /* Concatenate and hash all original track sources in order */
         sha256_ctx sha_ctx;
         aaruf_sha256_init(&sha_ctx);
 
@@ -271,21 +340,14 @@ static int verify_roundtrip(
         }
 
 cleanup:
-        unlink(rendered_bin);
+        ;
     }
 
-    /* Clean up temp files */
-    unlink(tmp_out);
-    /* Remove any .bin file for CUE render */
-    {
-        char tmp_bin[512];
-        snprintf(tmp_bin, sizeof(tmp_bin), "%s/verify.bin", tmpdir);
-        unlink(tmp_bin);
-    }
-    rmdir(tmpdir);
+    cleanup_verify_temp(tmpdir, &render_layout, orig_multi_bin);
 
     if(verify_result == DIMG_OK)
-        fprintf(stderr, "Verify: PASS (SHA-256 match)\n");
+        fprintf(stderr, "Verify: PASS (SHA-256 match%s)\n",
+                orig_multi_bin ? ", per-track" : "");
 
     return verify_result;
 }
@@ -298,6 +360,7 @@ int cmd_convert(int argc, char **argv)
     const char *codec  = NULL;
     bool json_output   = false;
     bool verify        = false;
+    bool multi_bin     = false;
 
     /* Parse arguments */
     for(int i = 1; i < argc; i++)
@@ -314,6 +377,8 @@ int cmd_convert(int argc, char **argv)
             json_output = true;
         else if(strcmp(argv[i], "--verify") == 0)
             verify = true;
+        else if(strcmp(argv[i], "--multi-bin") == 0)
+            multi_bin = true;
         else if(strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
         {
             print_convert_usage();
@@ -366,6 +431,13 @@ int cmd_convert(int argc, char **argv)
     if(verify && out_fmt != DISC_FMT_AARU)
     {
         fprintf(stderr, "--verify is only valid for ingest (output must be .aaru)\n");
+        return DIMG_ERR_ARGS;
+    }
+
+    /* --multi-bin only valid for CUE render */
+    if(multi_bin && out_fmt != DISC_FMT_CUE)
+    {
+        fprintf(stderr, "--multi-bin is only valid for CUE output\n");
         return DIMG_ERR_ARGS;
     }
 
@@ -505,7 +577,7 @@ int cmd_convert(int argc, char **argv)
             rc = iso_write(output, &layout, aaru_ctx);
             break;
         case DISC_FMT_CUE:
-            rc = cue_write(output, &layout, aaru_ctx);
+            rc = cue_write(output, &layout, aaru_ctx, multi_bin);
             break;
         default:
             fprintf(stderr, "Unsupported output format for render\n");
@@ -522,7 +594,31 @@ int cmd_convert(int argc, char **argv)
     if(json_output)
     {
         int64_t in_size = file_size(input);
-        int64_t out_size = file_size(output);
+        int64_t out_size = 0;
+
+        if(multi_bin)
+        {
+            /* Sum per-track BIN file sizes */
+            char stem[512];
+            size_t olen = strlen(output);
+            if(olen >= 4 && olen < sizeof(stem))
+            {
+                memcpy(stem, output, olen - 4);
+                stem[olen - 4] = '\0';
+            }
+            for(int t = 0; t < layout.track_count; t++)
+            {
+                char tpath[512];
+                snprintf(tpath, sizeof(tpath), "%s (Track %02d).bin",
+                         stem, layout.tracks[t].number);
+                int64_t s = file_size(tpath);
+                if(s > 0) out_size += s;
+            }
+        }
+        else
+        {
+            out_size = file_size(output);
+        }
 
         printf("{\n");
         printf("  \"input\": \"%s\",\n", input);
@@ -531,7 +627,8 @@ int cmd_convert(int argc, char **argv)
         printf("  \"tracks\": %d,\n", layout.track_count);
         printf("  \"sectors\": %" PRId64 ",\n", layout.total_sectors);
         printf("  \"input_size\": %" PRId64 ",\n", in_size < 0 ? 0 : in_size);
-        printf("  \"output_size\": %" PRId64 "\n", out_size < 0 ? 0 : out_size);
+        printf("  \"output_size\": %" PRId64 ",\n", out_size < 0 ? 0 : out_size);
+        printf("  \"multi_bin\": %s\n", multi_bin ? "true" : "false");
         printf("}\n");
     }
 

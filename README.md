@@ -84,7 +84,7 @@ make
 Requires [musl-cross-make](https://github.com/richfelker/musl-cross-make) toolchains.
 
 ```sh
-# All architectures (x86_64, ARM, RISC-V)
+# All architectures (x86_64, ARM, AArch64, RISC-V)
 ./build-release.sh v0.3.1
 
 # Single architecture
@@ -92,9 +92,13 @@ Requires [musl-cross-make](https://github.com/richfelker/musl-cross-make) toolch
 
 # Multiple specific architectures
 ./build-release.sh v0.3.1 arm riscv64
+
+# Force rebuild of libaaruformat
+./build-release.sh --clean v0.3.1
 ```
 
 Output in `dist/`: static stripped binary + `.tar.gz` + `.sha256`.
+Architectures without a toolchain installed are skipped automatically.
 
 ### Cross-compilation
 
@@ -106,6 +110,7 @@ flags when cross-compiling — the build script provides the correct flags inste
 |-------------|-----------------|-----------|
 | x86_64 | `x86_64-linux-musl` | (native defaults) |
 | ARM (NEON) | `arm-linux-musleabihf` | `-march=armv7-a+fp -mfpu=neon -mfloat-abi=hard` |
+| AArch64 | `aarch64-linux-musl` | (native defaults) |
 | RISC-V 64 | `riscv64-linux-musl` | `-march=rv64gc -mabi=lp64d` |
 
 For ARM without NEON (e.g. Cortex-A8), change `-mfpu=neon` to `-mfpu=vfpv3-d16` in the build script.

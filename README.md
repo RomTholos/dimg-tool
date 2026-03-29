@@ -21,13 +21,13 @@ but for CD and DVD-based console systems.
 | PlayStation 2 (DVD) | ISO | 2048-byte sectors |
 | PlayStation Portable | ISO | 2048-byte UMD sectors |
 
-All 10 systems verified with SHA-256 lossless roundtrips.
+All 10 systems verified with BLAKE3 lossless roundtrips.
 
 ## Usage
 
 ```
-dimg-tool convert -i <input> -o <output> [-s <system>] [-c <codec>]
-dimg-tool info    <image>
+dimg-tool convert -i <input> -o <output> [-s <system>] [-c <codec>] [options]
+dimg-tool info    [-j|--json] <image>
 dimg-tool verify  <image>
 ```
 
@@ -37,14 +37,20 @@ dimg-tool verify  <image>
 # CUE/BIN → .aaru (zstd compression)
 dimg-tool convert -i game.cue -o game.aaru -s ps1 -c zstd
 
-# ISO → .aaru
-dimg-tool convert -i game.iso -o game.aaru -s ps2dvd
+# ISO → .aaru with multi-threaded compression and verification
+dimg-tool convert -i game.iso -o game.aaru -s ps2dvd -T 0 --verify
 
 # .aaru → CUE/BIN
 dimg-tool convert -i game.aaru -o game.cue
 
 # .aaru → ISO
 dimg-tool convert -i game.aaru -o game.iso
+
+# Extract specific tracks as multi-BIN
+dimg-tool convert -i game.aaru -o game.cue -t 1,3-5 --multi-bin
+
+# Extract a single track as raw .bin
+dimg-tool convert -i game.aaru -o track02.bin -t 2
 ```
 
 ### Systems (-s)
@@ -60,6 +66,25 @@ dimg-tool convert -i game.aaru -o game.iso
 | `none` | No compression |
 
 Audio tracks always use FLAC. Deduplication (DDT) is always enabled.
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-T`, `--threads N` | Compression threads (`0`=auto, default `1`). zstd scales to N workers; LZMA max 2. |
+| `--verify` | Roundtrip verification after ingest (BLAKE3, no temp files) |
+| `-j`, `--json` | JSON summary to stdout on success |
+| `--multi-bin` | Render per-track BIN files (Redump multi-BIN format) |
+| `-t <tracks>` | Track selection for render (e.g. `1,3-5,8`) |
+| `-V`, `--version` | Print version |
+
+## Verification
+
+`--verify` performs a streaming roundtrip check: the original sector data
+is BLAKE3-hashed during ingest (zero extra I/O), then the .aaru file is
+decompressed and hashed directly in memory. No temp files or disk space
+needed. With `--json`, the digest is included in the output for
+reproducibility.
 
 ## SBI Subchannel Support
 
@@ -85,16 +110,13 @@ Requires [musl-cross-make](https://github.com/richfelker/musl-cross-make) toolch
 
 ```sh
 # All architectures (x86_64, ARM, AArch64, RISC-V)
-./build-release.sh v0.3.1
+./build-release.sh v0.3.4
 
 # Single architecture
-./build-release.sh v0.3.1 x86_64
-
-# Multiple specific architectures
-./build-release.sh v0.3.1 arm riscv64
+./build-release.sh v0.3.4 x86_64
 
 # Force rebuild of libaaruformat
-./build-release.sh --clean v0.3.1
+./build-release.sh --clean v0.3.4
 ```
 
 Output in `dist/`: static stripped binary + `.tar.gz` + `.sha256`.

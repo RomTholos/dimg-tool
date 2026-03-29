@@ -17,6 +17,7 @@
 #include "aaruformat.h"
 #include "aaruformat/enums.h"
 #include "aaruformat/structs/optical.h"
+#include "blake3.h"
 
 /* Map DiscTrackType → libaaruformat TrackType */
 static uint8_t track_type_to_aaru(DiscTrackType type)
@@ -49,7 +50,8 @@ static DiscTrackType track_type_from_aaru(uint8_t aaru_type)
 int sbi_load_and_write(const char *sbi_path, void *aaru_ctx);
 
 int aaru_write(const char *aaru_path, const DiscLayout *layout,
-               const char *options, const char *sbi_path)
+               const char *options, const char *sbi_path,
+               uint8_t *ingest_digest)
 {
     assert(aaru_path != NULL);
     assert(layout != NULL);
@@ -57,6 +59,10 @@ int aaru_write(const char *aaru_path, const DiscLayout *layout,
 
     int      is_cd       = disc_is_cd(layout->system);
     uint32_t sector_size = is_cd ? SECTOR_RAW : SECTOR_USER;
+
+    blake3_hasher b3;
+    if(ingest_digest != NULL)
+        blake3_hasher_init(&b3);
 
     /* Create .aaru image */
     void *ctx = aaruf_create(aaru_path,
@@ -147,6 +153,9 @@ int aaru_write(const char *aaru_path, const DiscLayout *layout,
                 return DIMG_ERR_IO;
             }
 
+            if(ingest_digest != NULL)
+                blake3_hasher_update(&b3, buf, dt->sector_size);
+
             int32_t res;
             if(is_cd)
                 res = aaruf_write_sector_long(ctx, (uint64_t)(dt->start + s),
@@ -175,6 +184,9 @@ int aaru_write(const char *aaru_path, const DiscLayout *layout,
 
         fclose(f);
     }
+
+    if(ingest_digest != NULL)
+        blake3_hasher_finalize(&b3, ingest_digest, BLAKE3_OUT_LEN);
 
     /* Write SBI subchannel data if provided */
     if(sbi_path != NULL && sbi_path[0] != '\0')

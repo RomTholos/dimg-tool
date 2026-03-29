@@ -8,6 +8,7 @@
  *   .aaru   → ISO     (render)
  */
 
+#include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -20,6 +21,7 @@
 #include "disc.h"
 #include "aaru.h"
 #include "aaruformat.h"
+#include "blake3.h"
 
 /* Format module prototypes */
 int iso_parse(const char *iso_path, DiscSystem system, DiscLayout *layout);
@@ -28,17 +30,13 @@ int cue_parse(const char *cue_path, DiscSystem system, DiscLayout *layout);
 int cue_write(const char *cue_path, const DiscLayout *layout, void *aaru_ctx,
               bool multi_bin);
 int aaru_write(const char *aaru_path, const DiscLayout *layout,
-               const char *options, const char *sbi_path);
+               const char *options, const char *sbi_path,
+               uint8_t *ingest_digest);
 int aaru_read_layout(const char *aaru_path, DiscLayout *layout, void **ctx_out);
 void sbi_find_for_cue(const char *cue_path, char *sbi_buf, size_t bufsize);
 
 /* Forward declaration for close */
 extern int aaruf_close(void *context);
-
-/* SHA-256 from libaaruformat (aaruf_ prefix) */
-extern void aaruf_aaruf_sha256_init(sha256_ctx *ctx);
-extern void aaruf_aaruf_sha256_update(sha256_ctx *ctx, const void *data, unsigned long len);
-extern void aaruf_aaruf_sha256_final(sha256_ctx *ctx, unsigned char *out);
 
 static void print_convert_usage(void)
 {
@@ -70,47 +68,36 @@ static void print_convert_usage(void)
             "  none     No compression\n"
             "\n"
             "Options:\n"
-            "  -j, --json     Print JSON summary to stdout on success\n"
-            "  --verify       Roundtrip verify after ingest (CUE/ISO → .aaru only)\n"
-            "  --multi-bin    Render per-track BIN files (Redump multi-BIN format)\n"
-            "  -t <tracks>    Extract specific tracks (render only, e.g. 1,3-5,8)\n"
-            "                 .bin output requires exactly 1 track\n"
-            "                 .cue output with -t forces multi-BIN\n");
+            "  -j, --json       Print JSON summary to stdout on success\n"
+            "  --verify         Roundtrip verify after ingest (CUE/ISO → .aaru only)\n"
+            "  --multi-bin      Render per-track BIN files (Redump multi-BIN format)\n"
+            "  -T, --threads N  Compression threads (0=auto, default 1)\n"
+            "                   zstd: N worker threads; LZMA: max 2\n"
+            "  -t <tracks>      Extract specific tracks (render only, e.g. 1,3-5,8)\n"
+            "                   .bin output requires exactly 1 track\n"
+            "                   .cue output with -t forces multi-BIN\n");
 }
 
-/* Build libaaruformat options string from codec name */
-static const char *codec_to_options(const char *codec)
+/* Build libaaruformat options string from codec name.
+ * Writes into caller-provided buffer. Returns 0 on success, -1 if codec unknown.
+ * threads > 1 appends ;threads=N (omitted otherwise, lib defaults to 1). */
+static int codec_to_options(const char *codec, int threads, char *buf, size_t bufsize)
 {
+    const char *base;
     if(codec == NULL || strcmp(codec, "lzma") == 0)
-        return "compress=true;deduplicate=true";
-    if(strcmp(codec, "zstd") == 0)
-        return "compress=true;deduplicate=true;zstd=true;zstd_level=19";
-    if(strcmp(codec, "none") == 0)
-        return "compress=false;deduplicate=true";
-    return NULL;
-}
-
-/* Compute SHA-256 of a file. Returns 0 on success, -1 on failure. */
-static int sha256_file(const char *path, uint8_t digest[SHA256_DIGEST_LENGTH])
-{
-    FILE *f = fopen(path, "rb");
-    if(f == NULL)
+        base = "compress=true;deduplicate=true";
+    else if(strcmp(codec, "zstd") == 0)
+        base = "compress=true;deduplicate=true;zstd=true;zstd_level=19";
+    else if(strcmp(codec, "none") == 0)
+        base = "compress=false;deduplicate=true";
+    else
         return -1;
 
-    sha256_ctx sha;
-    aaruf_sha256_init(&sha);
+    if(threads > 1)
+        snprintf(buf, bufsize, "%s;threads=%d", base, threads);
+    else
+        snprintf(buf, bufsize, "%s", base);
 
-    uint8_t buf[65536];
-    size_t n;
-    while((n = fread(buf, 1, sizeof(buf), f)) > 0)
-        aaruf_sha256_update(&sha, buf, (unsigned long)n);
-
-    int err = ferror(f);
-    fclose(f);
-    if(err)
-        return -1;
-
-    aaruf_sha256_final(&sha, digest);
     return 0;
 }
 
@@ -123,236 +110,92 @@ static int64_t file_size(const char *path)
     return (int64_t)st.st_size;
 }
 
-/* Detect if original layout was multi-BIN (different bin_path per track) */
-static int detect_multi_bin(const DiscLayout *layout)
-{
-    if(layout->track_count <= 1)
-        return 0;
-    for(int i = 1; i < layout->track_count; i++)
-        if(strcmp(layout->tracks[0].bin_path, layout->tracks[i].bin_path) != 0)
-            return 1;
-    return 0;
-}
-
-/* Clean up temp directory: remove per-track BINs, merged BIN, CUE, then dir */
-static void cleanup_verify_temp(const char *tmpdir, const DiscLayout *layout,
-                                int was_multi_bin)
-{
-    char path[512];
-
-    if(was_multi_bin)
-    {
-        for(int i = 0; i < layout->track_count; i++)
-        {
-            snprintf(path, sizeof(path), "%s/verify (Track %02d).bin",
-                     tmpdir, layout->tracks[i].number);
-            unlink(path);
-        }
-    }
-    else
-    {
-        snprintf(path, sizeof(path), "%s/verify.bin", tmpdir);
-        unlink(path);
-    }
-
-    snprintf(path, sizeof(path), "%s/verify.cue", tmpdir);
-    unlink(path);
-    snprintf(path, sizeof(path), "%s/verify.iso", tmpdir);
-    unlink(path);
-    rmdir(tmpdir);
-}
-
 /*
- * Roundtrip verification for ingest:
- * 1. Render .aaru → temp CUE/BIN or ISO
- * 2. SHA-256 compare each output file against original input
- * 3. Clean up temp files
- *
- * For CUE: auto-detects multi-BIN and verifies per-track for strongest guarantee.
+ * Direct roundtrip verification:
+ * 1. Open .aaru, decompress each sector into BLAKE3 hasher (no temp files)
+ * 2. Compare digest against ingest_digest computed during aaru_write()
  *
  * Returns DIMG_OK on match, DIMG_ERR_VERIFY on mismatch.
  */
-static int verify_roundtrip(
-    const char *aaru_path,
-    const char *original_input,
-    DiscFormat in_fmt,
-    const DiscLayout *original_layout)
+static int verify_direct(const char *aaru_path, const DiscLayout *original_layout,
+                         const uint8_t *ingest_digest)
 {
-    /* Create temp directory */
-    char tmpdir[] = "/tmp/dimg-verify-XXXXXX";
-    if(mkdtemp(tmpdir) == NULL)
-    {
-        fprintf(stderr, "Failed to create temp directory for verification\n");
-        return DIMG_ERR_IO;
-    }
-
-    /* Build temp output path */
-    const char *ext = (in_fmt == DISC_FMT_CUE) ? ".cue" : ".iso";
-    char tmp_out[512];
-    snprintf(tmp_out, sizeof(tmp_out), "%s/verify%s", tmpdir, ext);
-
-    /* Render .aaru → temp */
-    DiscLayout render_layout;
+    DiscLayout layout;
     void *aaru_ctx = NULL;
-    int rc = aaru_read_layout(aaru_path, &render_layout, &aaru_ctx);
+    int rc = aaru_read_layout(aaru_path, &layout, &aaru_ctx);
     if(rc != DIMG_OK)
-    {
-        rmdir(tmpdir);
         return rc;
+
+    int is_cd = disc_is_cd(layout.system);
+
+    blake3_hasher b3;
+    blake3_hasher_init(&b3);
+
+    uint8_t buf[SECTOR_RAW]; /* large enough for both 2352 and 2048 */
+    int64_t total_sectors = 0;
+    int64_t sectors_done  = 0;
+
+    for(int i = 0; i < layout.track_count; i++)
+        total_sectors += layout.tracks[i].end - layout.tracks[i].start + 1;
+
+    fprintf(stderr, "Verifying: decompress + BLAKE3 %" PRId64 " sectors\n",
+            total_sectors);
+
+    for(int i = 0; i < layout.track_count; i++)
+    {
+        const DiscTrack *dt = &layout.tracks[i];
+        int64_t count = dt->end - dt->start + 1;
+
+        for(int64_t s = 0; s < count; s++)
+        {
+            uint32_t rlen   = dt->sector_size;
+            uint8_t  status = 0;
+            int32_t  res;
+
+            if(is_cd)
+                res = aaruf_read_sector_long(aaru_ctx, (uint64_t)(dt->start + s),
+                                              false, buf, &rlen, &status);
+            else
+                res = aaruf_read_sector(aaru_ctx, (uint64_t)(dt->start + s),
+                                         false, buf, &rlen, &status);
+
+            if(res < 0)
+            {
+                fprintf(stderr, "Verify read error at sector %" PRId64 ": %d\n",
+                        dt->start + s, res);
+                aaruf_close(aaru_ctx);
+                return DIMG_ERR_IO;
+            }
+
+            if(res == 1)
+                memset(buf, 0, dt->sector_size);
+
+            blake3_hasher_update(&b3, buf, dt->sector_size);
+
+            sectors_done++;
+            if(sectors_done % 10000 == 0)
+                fprintf(stderr, "\r  %" PRId64 "/%" PRId64 " sectors",
+                        sectors_done, total_sectors);
+        }
     }
 
-    /* Auto-detect multi-BIN from original layout */
-    int orig_multi_bin = (in_fmt == DISC_FMT_CUE) ? detect_multi_bin(original_layout) : 0;
-
-    fprintf(stderr, "Verifying: roundtrip %s → %s%s\n", aaru_path, ext + 1,
-            orig_multi_bin ? " (multi-BIN)" : "");
-
-    if(in_fmt == DISC_FMT_CUE)
-        rc = cue_write(tmp_out, &render_layout, aaru_ctx, orig_multi_bin);
-    else
-        rc = iso_write(tmp_out, &render_layout, aaru_ctx);
+    if(total_sectors > 10000)
+        fprintf(stderr, "\r  %" PRId64 "/%" PRId64 " sectors\n",
+                total_sectors, total_sectors);
 
     aaruf_close(aaru_ctx);
 
-    if(rc != DIMG_OK)
+    uint8_t verify_digest[BLAKE3_OUT_LEN];
+    blake3_hasher_finalize(&b3, verify_digest, BLAKE3_OUT_LEN);
+
+    if(memcmp(ingest_digest, verify_digest, BLAKE3_OUT_LEN) != 0)
     {
-        cleanup_verify_temp(tmpdir, &render_layout, orig_multi_bin);
-        return rc;
+        fprintf(stderr, "VERIFY FAILED: BLAKE3 digest mismatch\n");
+        return DIMG_ERR_VERIFY;
     }
 
-    int verify_result = DIMG_OK;
-
-    if(in_fmt == DISC_FMT_ISO)
-    {
-        /* Direct file comparison */
-        uint8_t hash_orig[SHA256_DIGEST_LENGTH];
-        uint8_t hash_render[SHA256_DIGEST_LENGTH];
-
-        if(sha256_file(original_input, hash_orig) != 0)
-        {
-            fprintf(stderr, "Failed to hash original: %s\n", original_input);
-            verify_result = DIMG_ERR_IO;
-        }
-        else if(sha256_file(tmp_out, hash_render) != 0)
-        {
-            fprintf(stderr, "Failed to hash rendered: %s\n", tmp_out);
-            verify_result = DIMG_ERR_IO;
-        }
-        else if(memcmp(hash_orig, hash_render, SHA256_DIGEST_LENGTH) != 0)
-        {
-            fprintf(stderr, "VERIFY FAILED: ISO mismatch\n");
-            verify_result = DIMG_ERR_VERIFY;
-        }
-    }
-    else if(orig_multi_bin)
-    {
-        /* Multi-BIN: compare each per-track rendered BIN against original */
-        for(int t = 0; t < original_layout->track_count; t++)
-        {
-            const DiscTrack *dt = &original_layout->tracks[t];
-
-            char rendered_track[512];
-            snprintf(rendered_track, sizeof(rendered_track),
-                     "%s/verify (Track %02d).bin", tmpdir, dt->number);
-
-            uint8_t hash_orig[SHA256_DIGEST_LENGTH];
-            uint8_t hash_render[SHA256_DIGEST_LENGTH];
-
-            if(sha256_file(dt->bin_path, hash_orig) != 0)
-            {
-                fprintf(stderr, "Failed to hash original track %d: %s\n",
-                        dt->number, dt->bin_path);
-                verify_result = DIMG_ERR_IO;
-                break;
-            }
-
-            if(sha256_file(rendered_track, hash_render) != 0)
-            {
-                fprintf(stderr, "Failed to hash rendered track %d: %s\n",
-                        dt->number, rendered_track);
-                verify_result = DIMG_ERR_IO;
-                break;
-            }
-
-            if(memcmp(hash_orig, hash_render, SHA256_DIGEST_LENGTH) != 0)
-            {
-                fprintf(stderr, "VERIFY FAILED: Track %d BIN mismatch\n",
-                        dt->number);
-                verify_result = DIMG_ERR_VERIFY;
-                break;
-            }
-        }
-    }
-    else
-    {
-        /* Single-BIN: compare rendered merged BIN against concatenated originals */
-        char rendered_bin[512];
-        snprintf(rendered_bin, sizeof(rendered_bin), "%s/verify.bin", tmpdir);
-
-        uint8_t hash_render[SHA256_DIGEST_LENGTH];
-        if(sha256_file(rendered_bin, hash_render) != 0)
-        {
-            fprintf(stderr, "Failed to hash rendered .bin\n");
-            verify_result = DIMG_ERR_IO;
-            goto cleanup;
-        }
-
-        sha256_ctx sha_ctx;
-        aaruf_sha256_init(&sha_ctx);
-
-        uint8_t buf[65536];
-
-        for(int t = 0; t < original_layout->track_count; t++)
-        {
-            const DiscTrack *dt = &original_layout->tracks[t];
-
-            FILE *f = fopen(dt->bin_path, "rb");
-            if(f == NULL)
-            {
-                fprintf(stderr, "Failed to open original track: %s\n", dt->bin_path);
-                verify_result = DIMG_ERR_IO;
-                goto cleanup;
-            }
-
-            if(dt->bin_offset > 0)
-                fseeko(f, dt->bin_offset, SEEK_SET);
-
-            int64_t track_bytes = (dt->end - dt->start + 1) * (int64_t)dt->sector_size;
-            int64_t remaining = track_bytes;
-
-            while(remaining > 0)
-            {
-                size_t chunk = (size_t)(remaining < (int64_t)sizeof(buf) ? remaining : (int64_t)sizeof(buf));
-                size_t n = fread(buf, 1, chunk, f);
-                if(n == 0)
-                    break;
-                aaruf_sha256_update(&sha_ctx, buf, (unsigned long)n);
-                remaining -= (int64_t)n;
-            }
-
-            fclose(f);
-        }
-
-        uint8_t hash_orig[SHA256_DIGEST_LENGTH];
-        aaruf_sha256_final(&sha_ctx, hash_orig);
-
-        if(memcmp(hash_orig, hash_render, SHA256_DIGEST_LENGTH) != 0)
-        {
-            fprintf(stderr, "VERIFY FAILED: BIN data mismatch\n");
-            verify_result = DIMG_ERR_VERIFY;
-        }
-
-cleanup:
-        ;
-    }
-
-    cleanup_verify_temp(tmpdir, &render_layout, orig_multi_bin);
-
-    if(verify_result == DIMG_OK)
-        fprintf(stderr, "Verify: PASS (SHA-256 match%s)\n",
-                orig_multi_bin ? ", per-track" : "");
-
-    return verify_result;
+    fprintf(stderr, "Verify: PASS (BLAKE3 match)\n");
+    return DIMG_OK;
 }
 
 /*
@@ -413,6 +256,8 @@ int cmd_convert(int argc, char **argv)
     const char *system = NULL;
     const char *codec  = NULL;
     const char *track_spec = NULL;
+    const char *threads_str = NULL;
+    int threads        = 0;   /* 0 = not specified (default single-threaded) */
     bool json_output   = false;
     bool verify        = false;
     bool multi_bin     = false;
@@ -430,6 +275,8 @@ int cmd_convert(int argc, char **argv)
             codec = argv[++i];
         else if(strcmp(argv[i], "-t") == 0 && i + 1 < argc)
             track_spec = argv[++i];
+        else if((strcmp(argv[i], "-T") == 0 || strcmp(argv[i], "--threads") == 0) && i + 1 < argc)
+            threads_str = argv[++i];
         else if(strcmp(argv[i], "-j") == 0 || strcmp(argv[i], "--json") == 0)
             json_output = true;
         else if(strcmp(argv[i], "--verify") == 0)
@@ -447,6 +294,33 @@ int cmd_convert(int argc, char **argv)
     {
         print_convert_usage();
         return DIMG_ERR_ARGS;
+    }
+
+    /* Parse thread count */
+    if(threads_str != NULL)
+    {
+        errno = 0;
+        char *endptr = NULL;
+        long val = strtol(threads_str, &endptr, 10);
+        if(endptr == threads_str || *endptr != '\0' || errno == ERANGE)
+        {
+            fprintf(stderr, "Invalid thread count: %s\n", threads_str);
+            return DIMG_ERR_ARGS;
+        }
+        if(val < 0)
+        {
+            fprintf(stderr, "Thread count must be non-negative\n");
+            return DIMG_ERR_ARGS;
+        }
+        if(val == 0)
+        {
+            long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+            threads = (ncpu > 0) ? (int)ncpu : 1;
+        }
+        else
+        {
+            threads = (int)val;
+        }
     }
 
     /* Detect formats */
@@ -476,13 +350,14 @@ int cmd_convert(int argc, char **argv)
         return DIMG_ERR_ARGS;
     }
 
-    /* Validate compression codec */
-    const char *options = codec_to_options(codec);
-    if(codec != NULL && options == NULL)
+    /* Validate compression codec and build options string */
+    char options_buf[128];
+    if(codec_to_options(codec, threads, options_buf, sizeof(options_buf)) != 0)
     {
         fprintf(stderr, "Unknown compression codec: %s\n", codec);
         return DIMG_ERR_ARGS;
     }
+    const char *options = options_buf;
 
     /* --verify only valid for ingest (to .aaru) */
     if(verify && out_fmt != DISC_FMT_AARU)
@@ -542,6 +417,9 @@ int cmd_convert(int argc, char **argv)
         fprintf(stderr, "Converting: %s → %s\n", input, output);
         fprintf(stderr, "System:     %s\n", disc_system_name(disc_sys));
         fprintf(stderr, "Codec:      %s\n", effective_codec);
+        if(threads > 1)
+            fprintf(stderr, "Threads:    %d%s\n", threads,
+                    strcmp(effective_codec, "lzma") == 0 ? " (LZMA max 2)" : "");
 
         DiscLayout layout;
         int rc;
@@ -574,8 +452,10 @@ int cmd_convert(int argc, char **argv)
             sbi_embedded = sbi_path[0] != '\0';
         }
 
+        uint8_t ingest_digest[BLAKE3_OUT_LEN];
         rc = aaru_write(output, &layout, options,
-                         sbi_path[0] ? sbi_path : NULL);
+                         sbi_path[0] ? sbi_path : NULL,
+                         verify ? ingest_digest : NULL);
         if(rc != DIMG_OK)
             return rc;
 
@@ -583,7 +463,7 @@ int cmd_convert(int argc, char **argv)
         bool verified = false;
         if(verify)
         {
-            rc = verify_roundtrip(output, input, in_fmt, &layout);
+            rc = verify_direct(output, &layout, ingest_digest);
             if(rc != DIMG_OK)
                 return rc;
             verified = true;
@@ -615,6 +495,7 @@ int cmd_convert(int argc, char **argv)
             printf("  \"output\": \"%s\",\n", output);
             printf("  \"system\": \"%s\",\n", disc_system_cli_name(disc_sys));
             printf("  \"codec\": \"%s\",\n", effective_codec);
+            printf("  \"threads\": %d,\n", threads > 0 ? threads : 1);
             printf("  \"tracks\": %d,\n", layout.track_count);
             printf("  \"sectors\": %" PRId64 ",\n", layout.total_sectors);
             printf("  \"input_size\": %" PRId64 ",\n", in_size);
@@ -625,7 +506,11 @@ int cmd_convert(int argc, char **argv)
             {
                 printf(",\n");
                 printf("  \"verified\": %s,\n", verified ? "true" : "false");
-                printf("  \"verify_hash\": \"sha256\"\n");
+                printf("  \"verify_hash\": \"blake3\",\n");
+                printf("  \"verify_digest\": \"");
+                for(int d = 0; d < BLAKE3_OUT_LEN; d++)
+                    printf("%02x", ingest_digest[d]);
+                printf("\"\n");
             }
             else
             {
